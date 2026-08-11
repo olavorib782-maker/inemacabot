@@ -23,6 +23,49 @@ from conversation_history import ConversationHistory
 
 logger = logging.getLogger(__name__)
 SERVICES_KEY = "services"
+TELEGRAM_MAX_MESSAGE_LENGTH = 4000
+
+
+def split_message(
+    text: str,
+    limit: int = TELEGRAM_MAX_MESSAGE_LENGTH,
+) -> list[str]:
+    """Divide uma mensagem longa em blocos compatíveis com o Telegram."""
+
+    if not text:
+        return []
+
+    if len(text) <= limit:
+        return [text]
+
+    parts: list[str] = []
+    remaining = text
+
+    while len(remaining) > limit:
+        chunk = remaining[:limit]
+
+        split_at = chunk.rfind("\n")
+        if split_at <= 0:
+            split_at = chunk.rfind(" ")
+
+        if split_at <= 0:
+            split_at = limit
+
+        part = remaining[:split_at]
+
+        if part:
+            parts.append(part)
+
+        remaining = remaining[split_at:]
+
+        if remaining.startswith("\n") or remaining.startswith(" "):
+            remaining = remaining[1:]
+
+    if remaining:
+        parts.append(remaining)
+
+    return parts
+
 
 
 @dataclass(slots=True)
@@ -107,7 +150,10 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             return
 
         services.history.add_pair(message.text, answer)
-        await message.reply_text(answer)
+
+        for part in split_message(answer):
+            await message.reply_text(part)
+
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
