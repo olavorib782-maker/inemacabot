@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import cast
+from job_event_bus import JobEventBus
 
 from telegram import Update
 from telegram.ext import (
@@ -17,9 +19,16 @@ from telegram.ext import (
 )
 
 from ai_client import AIClient, AIClientError
+from agent_runner import AgentRunner
 from config import Settings, load_config
 from conversation_history import ConversationHistory
-
+from job_service import JobService
+from queue_manager import QueueManager
+from router import Router
+from skill_loader import SkillLoader
+from worker_manager import WorkerManager
+from result_notifier import ResultNotifier
+from result_supervisor import ResultSupervisor
 
 logger = logging.getLogger(__name__)
 SERVICES_KEY = "services"
@@ -75,7 +84,14 @@ class BotServices:
     settings: Settings
     ai_client: AIClient
     history: ConversationHistory
-
+    queue_manager: QueueManager
+    job_service: JobService
+    worker_manager: WorkerManager
+    skill_loader: SkillLoader
+    agent_runner: AgentRunner
+    result_notifier: ResultNotifier | None = None
+    result_supervisor: ResultSupervisor | None = None
+    result_supervisor_task: asyncio.Task[None] | None = None
 
 def _services(context: ContextTypes.DEFAULT_TYPE) -> BotServices:
     return cast(BotServices, context.application.bot_data[SERVICES_KEY])
@@ -136,6 +152,17 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if message is None or not message.text:
         return
 
+    job = await services.job_service.submit(message.chat_id, message.text)
+    if job is not None:
+        await message.reply_text(
+            "Trabalho recebido.\n"
+            f"Fila: {job.fila}\n"
+            f"Skill: {job.skill}\n"
+            f"Status: {job.status.value}\n"
+            f"Job: {job.id}"
+        )
+        return
+
     async with services.history.lock:
         try:
             answer = await services.ai_client.get_response(
@@ -161,14 +188,65 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     logger.error("Erro não tratado pelo bot do Telegram (%s).", type(context.error).__name__)
 
 
+async def start_workers(application: Application) -> None:
+    """Inicia os workers quando a aplicação do Telegram estiver pronta."""
+    services = cast(BotServices, application.bot_data[SERVICES_KEY])
+    await services.worker_manager.start()
+    if services.result_supervisor is not None and services.result_supervisor_task is None:
+        services.result_supervisor_task = asyncio.create_task(
+            services.result_supervisor.run(),
+            name="result-supervisor",
+        )
+
+
+async def stop_workers(application: Application) -> None:
+    """Encerra os workers durante o desligamento da aplicação."""
+    services = cast(BotServices, application.bot_data[SERVICES_KEY])
+    supervisor_task = services.result_supervisor_task
+    if supervisor_task is not None:
+        supervisor_task.cancel()
+        await asyncio.gather(supervisor_task, return_exceptions=True)
+        services.result_supervisor_task = None
+    await services.worker_manager.stop()
+
+
 def create_application(settings: Settings) -> Application:
     """Monta a aplicação do Telegram e registra seus handlers."""
-    application = ApplicationBuilder().token(settings.telegram_bot_token).build()
+    queue_manager = QueueManager()
+    ai_client = AIClient(settings)
+    skill_loader = SkillLoader("skills")
+    agent_runner = AgentRunner(ai_client, skill_loader)
+    event_bus = JobEventBus()
+    application = (
+        ApplicationBuilder()
+        .token(settings.telegram_bot_token)
+        .post_init(start_workers)
+        .post_shutdown(stop_workers)
+        .build()
+    )
+    async def send_result(chat_id: int, text: str) -> None:
+        for part in split_message(text):
+            await application.bot.send_message(chat_id=chat_id, text=part)
+
+    result_notifier = ResultNotifier(send_result)
+    result_supervisor = ResultSupervisor(event_bus, result_notifier)
     application.bot_data[SERVICES_KEY] = BotServices(
         settings=settings,
-        ai_client=AIClient(settings),
+        ai_client=ai_client,
         history=ConversationHistory(settings.history_max_messages),
+        queue_manager=queue_manager,
+        job_service=JobService(Router(), queue_manager),
+        worker_manager=WorkerManager(
+            queue_manager,
+            agent_runner,
+            event_bus=event_bus,
+        ),
+        skill_loader=skill_loader,
+        agent_runner=agent_runner,
+        result_notifier=result_notifier,
+        result_supervisor=result_supervisor,
     )
+
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("ajuda", help_command))
     application.add_handler(CommandHandler("limpar", clear_command))
