@@ -23,6 +23,7 @@ from agent_runner import AgentRunner
 from config import Settings, load_config
 from conversation_history import ConversationHistory
 from job_service import JobService
+from job_registry import JobRegistry
 from queue_manager import QueueManager
 from router import Router
 from skill_loader import SkillLoader
@@ -85,6 +86,7 @@ class BotServices:
     ai_client: AIClient
     history: ConversationHistory
     queue_manager: QueueManager
+    job_registry: JobRegistry
     job_service: JobService
     worker_manager: WorkerManager
     skill_loader: SkillLoader
@@ -213,6 +215,7 @@ async def stop_workers(application: Application) -> None:
 def create_application(settings: Settings) -> Application:
     """Monta a aplicação do Telegram e registra seus handlers."""
     queue_manager = QueueManager()
+    job_registry = JobRegistry()
     ai_client = AIClient(settings)
     skill_loader = SkillLoader("skills")
     agent_runner = AgentRunner(ai_client, skill_loader)
@@ -235,7 +238,8 @@ def create_application(settings: Settings) -> Application:
         ai_client=ai_client,
         history=ConversationHistory(settings.history_max_messages),
         queue_manager=queue_manager,
-        job_service=JobService(Router(), queue_manager),
+        job_registry=job_registry,
+        job_service=JobService(Router(), queue_manager, job_registry),
         worker_manager=WorkerManager(
             queue_manager,
             agent_runner,

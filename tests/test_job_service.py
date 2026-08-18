@@ -4,8 +4,10 @@ import asyncio
 
 from job import JobStatus
 from job_service import JobService
+from job_registry import JobRegistry
 from queue_manager import QueueManager
 from router import Router
+from workers.base_worker import BaseWorker
 
 
 def test_mensagem_reconhecida_cria_job_com_dados_corretos() -> None:
@@ -32,6 +34,66 @@ def test_job_criado_e_colocado_na_queue_manager() -> None:
         assert submitted_job is not None
         assert manager.size("mkitextos") == 1
         assert await manager.get("mkitextos") is submitted_job
+
+    asyncio.run(scenario())
+
+
+def test_job_e_registrado_antes_de_ser_enfileirado() -> None:
+    async def scenario() -> None:
+        registry = JobRegistry()
+
+        class InspectingQueueManager(QueueManager):
+            async def put(self, job) -> None:  # type: ignore[no-untyped-def]
+                assert registry.get(job.id) is job
+                await super().put(job)
+
+        manager = InspectingQueueManager()
+        service = JobService(Router(), manager, registry)
+        job = await service.submit(42, "Preciso de um roteiro")
+
+        assert job is not None
+        assert registry.get(job.id) is job
+
+    asyncio.run(scenario())
+
+
+def test_registry_observa_as_mutacoes_feitas_pelo_worker() -> None:
+    class ControlledWorker(BaseWorker):
+        def __init__(self, manager: QueueManager) -> None:
+            super().__init__(manager, "mkitextos")
+            self.processing = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def process_job(self, job) -> str:  # type: ignore[no-untyped-def]
+            self.processing.set()
+            await self.release.wait()
+            return "resultado"
+
+    async def scenario() -> None:
+        registry = JobRegistry()
+        manager = QueueManager()
+        service = JobService(Router(), manager, registry)
+        worker = ControlledWorker(manager)
+
+        job = await service.submit(42, "Preciso de um roteiro")
+        assert job is not None
+        registered_job = registry.get(job.id)
+        assert registered_job is job
+        assert registered_job.status is JobStatus.AGUARDANDO
+
+        task = asyncio.create_task(worker.run())
+        await asyncio.wait_for(worker.processing.wait(), timeout=1)
+        assert registered_job.status is JobStatus.PROCESSANDO
+
+        worker.release.set()
+        async def wait_until_completed() -> None:
+            while registered_job.status is not JobStatus.CONCLUIDO:
+                await asyncio.sleep(0)
+        await asyncio.wait_for(wait_until_completed(), timeout=1)
+        assert registered_job.status is JobStatus.CONCLUIDO
+
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
     asyncio.run(scenario())
 
@@ -84,4 +146,4 @@ def test_tipos_de_trabalho_chegam_as_filas_corretas() -> None:
 
 def _make_service() -> tuple[JobService, QueueManager]:
     manager = QueueManager()
-    return JobService(Router(), manager), manager
+    return JobService(Router(), manager, JobRegistry()), manager

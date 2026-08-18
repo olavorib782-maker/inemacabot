@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from job import Job
+from job_registry import JobRegistry
 from queue_manager import QueueManager
 from router import Router
 
@@ -10,9 +11,12 @@ from router import Router
 class JobService:
     """Cria e enfileira trabalhos a partir das decisões do roteador."""
 
-    def __init__(self, router: Router, queue_manager: QueueManager) -> None:
+    def __init__(
+        self, router: Router, queue_manager: QueueManager, job_registry: JobRegistry
+    ) -> None:
         self.router = router
         self.queue_manager = queue_manager
+        self.job_registry = job_registry
 
     async def submit(self, chat_id: int, message: str) -> Job | None:
         """Enfileira um trabalho reconhecido ou retorna ``None`` para conversa normal."""
@@ -28,5 +32,6 @@ class JobService:
             titulo=message,
             descricao=message,
         )
+        self.job_registry.add(job)
         await self.queue_manager.put(job)
         return job

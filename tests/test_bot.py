@@ -198,6 +198,7 @@ def test_create_application_compartilha_dependencias_do_agent_runner() -> None:
     assert services.agent_runner.ai_client is services.ai_client
     assert services.agent_runner.skill_loader is services.skill_loader
     assert services.job_service.queue_manager is services.queue_manager
+    assert services.job_service.job_registry is services.job_registry
     assert services.worker_manager.queue_manager is services.queue_manager
     assert services.worker_manager.agent_runner is services.agent_runner
     assert services.worker_manager.event_bus is services.result_supervisor.event_bus
