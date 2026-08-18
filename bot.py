@@ -22,8 +22,9 @@ from ai_client import AIClient, AIClientError
 from agent_runner import AgentRunner
 from config import Settings, load_config
 from conversation_history import ConversationHistory
-from job_service import JobService
+from job import JobStatus
 from job_registry import JobRegistry
+from job_service import JobService
 from queue_manager import QueueManager
 from router import Router
 from skill_loader import SkillLoader
@@ -126,7 +127,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if message is not None:
         await message.reply_text(
             "Envie uma mensagem para falar com o assistente. "
-            "Use /limpar para apagar o contexto da conversa."
+            "Use /limpar para apagar o contexto da conversa e /status para "
+            "consultar os trabalhos."
         )
 
 
@@ -142,6 +144,61 @@ async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     message = update.effective_message
     if message is not None:
         await message.reply_text("O contexto da conversa foi apagado.")
+
+
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Mostra um resumo dos trabalhos ou os detalhes de um Job."""
+    services = _services(context)
+    if not _is_authorized(update, services):
+        return
+
+    message = update.effective_message
+    if message is None:
+        return
+
+    if len(context.args) > 1:
+        await message.reply_text("Uso: /status ou /status <job_id>")
+        return
+
+    if context.args:
+        job_id = context.args[0]
+        job = services.job_registry.get(job_id)
+        if job is None:
+            await message.reply_text(f"Job não encontrado: {job_id}")
+            return
+
+        titulo = job.titulo
+        if len(titulo) > 200:
+            titulo = f"{titulo[:200]}..."
+
+        await message.reply_text(
+            "Detalhes do Job\n\n"
+            f"Job ID: {job.id}\n"
+            f"Fila: {job.fila}\n"
+            f"Skill: {job.skill}\n"
+            f"Status: {job.status.value}\n"
+            f"Título: {titulo}"
+        )
+        return
+
+    jobs = services.job_registry.list_all()
+    if not jobs:
+        await message.reply_text("Nenhum Job registrado.")
+        return
+
+    counts = {status: 0 for status in JobStatus}
+    for job in jobs:
+        counts[job.status] += 1
+
+    await message.reply_text(
+        "Resumo dos Jobs\n\n"
+        f"AGUARDANDO: {counts[JobStatus.AGUARDANDO]}\n"
+        f"PROCESSANDO: {counts[JobStatus.PROCESSANDO]}\n"
+        f"CONCLUIDO: {counts[JobStatus.CONCLUIDO]}\n"
+        f"ERRO: {counts[JobStatus.ERRO]}\n"
+        f"CANCELADO: {counts[JobStatus.CANCELADO]}\n"
+        f"TOTAL: {len(jobs)}"
+    )
 
 
 async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -254,6 +311,7 @@ def create_application(settings: Settings) -> Application:
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("ajuda", help_command))
     application.add_handler(CommandHandler("limpar", clear_command))
+    application.add_handler(CommandHandler("status", status_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message))
     application.add_error_handler(error_handler)
     return application

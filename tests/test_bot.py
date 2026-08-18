@@ -9,14 +9,18 @@ from bot import (
     TELEGRAM_MAX_MESSAGE_LENGTH,
     _is_authorized,
     create_application,
+    help_command,
     split_message,
     start_workers,
+    status_command,
     stop_workers,
     text_message,
 )
 from conversation_history import ConversationHistory
 from config import Settings
-from job import Job
+from job import Job, JobStatus
+from job_registry import JobRegistry
+from telegram.ext import CommandHandler
 
 
 @dataclass
@@ -43,6 +47,159 @@ def test_is_authorized_bloqueia_usuario_diferente() -> None:
 
 def test_is_authorized_bloqueia_quando_sem_usuario() -> None:
     assert _is_authorized(_fake_update(None), _fake_services()) is False
+
+
+def test_help_command_menciona_status() -> None:
+    async def scenario() -> None:
+        message = _FakeMessage("/ajuda", 42)
+        await help_command(
+            _message_update(42, message),
+            _context(_fake_services()),
+        )
+        assert len(message.replies) == 1
+        assert "/status" in message.replies[0]
+
+    asyncio.run(scenario())
+
+
+def test_status_com_registry_vazio() -> None:
+    async def scenario() -> None:
+        message = _FakeMessage("/status", 42)
+        await status_command(
+            _message_update(42, message),
+            _status_context(JobRegistry()),
+        )
+        assert message.replies == ["Nenhum Job registrado."]
+
+    asyncio.run(scenario())
+
+
+def test_status_mostra_resumo_com_todos_os_estados_e_total() -> None:
+    async def scenario() -> None:
+        registry = JobRegistry()
+        statuses = [
+            JobStatus.AGUARDANDO,
+            JobStatus.AGUARDANDO,
+            JobStatus.PROCESSANDO,
+            JobStatus.CONCLUIDO,
+            JobStatus.ERRO,
+        ]
+        for status in statuses:
+            job = _make_status_job()
+            job.status = status
+            registry.add(job)
+
+        message = _FakeMessage("/status", 42)
+        await status_command(
+            _message_update(42, message),
+            _status_context(registry),
+        )
+
+        assert message.replies == [
+            "Resumo dos Jobs\n\n"
+            "AGUARDANDO: 2\n"
+            "PROCESSANDO: 1\n"
+            "CONCLUIDO: 1\n"
+            "ERRO: 1\n"
+            "CANCELADO: 0\n"
+            "TOTAL: 5"
+        ]
+
+    asyncio.run(scenario())
+
+
+def test_status_consulta_job_especifico() -> None:
+    async def scenario() -> None:
+        registry = JobRegistry()
+        job = _make_status_job("Meu trabalho")
+        job.status = JobStatus.PROCESSANDO
+        registry.add(job)
+        message = _FakeMessage(f"/status {job.id}", 42)
+
+        await status_command(
+            _message_update(42, message),
+            _status_context(registry, [job.id]),
+        )
+
+        assert message.replies == [
+            "Detalhes do Job\n\n"
+            f"Job ID: {job.id}\n"
+            "Fila: mkitextos\n"
+            "Skill: teste\n"
+            "Status: PROCESSANDO\n"
+            "Título: Meu trabalho"
+        ]
+
+    asyncio.run(scenario())
+
+
+def test_status_job_inexistente() -> None:
+    async def scenario() -> None:
+        message = _FakeMessage("/status desconhecido", 42)
+        await status_command(
+            _message_update(42, message),
+            _status_context(JobRegistry(), ["desconhecido"]),
+        )
+        assert message.replies == ["Job não encontrado: desconhecido"]
+
+    asyncio.run(scenario())
+
+
+def test_status_rejeita_mais_de_um_argumento() -> None:
+    async def scenario() -> None:
+        message = _FakeMessage("/status um dois", 42)
+        await status_command(
+            _message_update(42, message),
+            _status_context(JobRegistry(), ["um", "dois"]),
+        )
+        assert message.replies == ["Uso: /status ou /status <job_id>"]
+
+    asyncio.run(scenario())
+
+
+def test_status_nao_autorizado_nao_consulta_registry_nem_responde() -> None:
+    async def scenario() -> None:
+        registry = _SpyRegistry()
+        message = _FakeMessage("/status", 42)
+        await status_command(
+            _message_update(999, message),
+            _status_context(registry),
+        )
+        assert registry.calls == []
+        assert message.replies == []
+
+    asyncio.run(scenario())
+
+
+def test_status_sem_effective_message_nao_responde_nem_consulta_registry() -> None:
+    async def scenario() -> None:
+        registry = _SpyRegistry()
+        update = SimpleNamespace(
+            effective_user=SimpleNamespace(id=42),
+            effective_message=None,
+        )
+        await status_command(update, _status_context(registry))
+        assert registry.calls == []
+
+    asyncio.run(scenario())
+
+
+def test_status_trunca_titulo_acima_de_200_caracteres() -> None:
+    async def scenario() -> None:
+        registry = JobRegistry()
+        job = _make_status_job("a" * 201)
+        registry.add(job)
+        message = _FakeMessage(f"/status {job.id}", 42)
+
+        await status_command(
+            _message_update(42, message),
+            _status_context(registry, [job.id]),
+        )
+
+        assert message.replies[0].endswith(f"Título: {'a' * 200}...")
+        assert "a" * 201 not in message.replies[0]
+
+    asyncio.run(scenario())
 
 
 def test_split_message_nao_divide_texto_curto() -> None:
@@ -204,6 +361,26 @@ def test_create_application_compartilha_dependencias_do_agent_runner() -> None:
     assert services.worker_manager.event_bus is services.result_supervisor.event_bus
 
 
+def test_create_application_registra_comando_status() -> None:
+    application = create_application(
+        Settings(
+            telegram_bot_token="123:test-token",
+            telegram_allowed_user_id=42,
+            ai_api_key="test-key",
+            ai_base_url="https://example.test/v1",
+            ai_model="test-model",
+            ai_system_prompt="Teste",
+            history_max_messages=20,
+        )
+    )
+
+    handlers = [handler for group in application.handlers.values() for handler in group]
+    assert any(
+        isinstance(handler, CommandHandler) and "status" in handler.commands
+        for handler in handlers
+    )
+
+
 class _FakeMessage:
     def __init__(self, text: str, chat_id: int) -> None:
         self.text = text
@@ -260,6 +437,19 @@ class _FakeResultSupervisor:
             raise
 
 
+class _SpyRegistry:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str | None]] = []
+
+    def get(self, job_id: str) -> None:
+        self.calls.append(("get", job_id))
+        return None
+
+    def list_all(self) -> list[Job]:
+        self.calls.append(("list_all", None))
+        return []
+
+
 def _services_for_text(
     job_service: _FakeJobService,
     ai_client: _FakeAIClient,
@@ -279,3 +469,24 @@ def _message_update(user_id: int, message: _FakeMessage) -> SimpleNamespace:
 
 def _context(services: SimpleNamespace) -> SimpleNamespace:
     return SimpleNamespace(application=SimpleNamespace(bot_data={SERVICES_KEY: services}))
+
+
+def _status_context(
+    registry: JobRegistry | _SpyRegistry,
+    args: list[str] | None = None,
+) -> SimpleNamespace:
+    services = SimpleNamespace(settings=_FakeSettings(), job_registry=registry)
+    context = _context(services)
+    context.args = [] if args is None else args
+    return context
+
+
+def _make_status_job(titulo: str = "Trabalho") -> Job:
+    return Job(
+        chat_id=42,
+        fila="mkitextos",
+        tipo="texto",
+        skill="teste",
+        titulo=titulo,
+        descricao="Descrição",
+    )
