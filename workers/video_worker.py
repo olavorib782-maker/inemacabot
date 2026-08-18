@@ -7,6 +7,7 @@ from job import Job
 from queue_manager import QueueManager
 from workers.base_worker import BaseWorker
 from job_event_bus import JobEventBus
+from job_registry import JobRegistry
 
 class VideoWorker(BaseWorker):
     """Processa exclusivamente trabalhos da fila ``mkivideos``."""
@@ -19,10 +20,13 @@ class VideoWorker(BaseWorker):
         fila: str = _FILA,
         agent_runner: AgentRunner | None = None,
         event_bus: JobEventBus | None = None,
+        job_registry: JobRegistry | None = None,
     ) -> None:
         if fila != self._FILA:
             raise ValueError("VideoWorker aceita apenas a fila mkivideos.")
-        super().__init__(queue_manager, fila, event_bus=event_bus)
+        super().__init__(
+            queue_manager, fila, event_bus=event_bus, job_registry=job_registry
+        )
         self.agent_runner = agent_runner
 
     async def process_job(self, job: Job) -> str:

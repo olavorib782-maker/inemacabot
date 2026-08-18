@@ -48,6 +48,7 @@ def test_load_config_com_todas_variaveis_validas(
     assert settings.ai_base_url == REQUIRED_ENV["AI_BASE_URL"]
     assert settings.ai_model == REQUIRED_ENV["AI_MODEL"]
     assert settings.history_max_messages == 20
+    assert settings.jobs_db_path == "jobs.db"
 
 
 @pytest.mark.parametrize("missing_key", sorted(REQUIRED_ENV.keys()))
@@ -106,3 +107,13 @@ def test_load_config_usa_history_max_messages_customizado(
     settings = load_config()
 
     assert settings.history_max_messages == 5
+
+
+def test_load_config_usa_caminho_de_jobs_customizado(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_env(monkeypatch, {"JOBS_DB_PATH": "dados/jobs.sqlite3"})
+
+    settings = load_config()
+
+    assert settings.jobs_db_path == "dados/jobs.sqlite3"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from job import JobStatus
 from job_service import JobService
@@ -8,6 +9,7 @@ from job_registry import JobRegistry
 from queue_manager import QueueManager
 from router import Router
 from workers.base_worker import BaseWorker
+from sqlite_job_store import SQLiteJobStore
 
 
 def test_mensagem_reconhecida_cria_job_com_dados_corretos() -> None:
@@ -38,13 +40,18 @@ def test_job_criado_e_colocado_na_queue_manager() -> None:
     asyncio.run(scenario())
 
 
-def test_job_e_registrado_antes_de_ser_enfileirado() -> None:
+def test_job_e_persistido_antes_de_ser_enfileirado(tmp_path: Path) -> None:
     async def scenario() -> None:
-        registry = JobRegistry()
+        store = SQLiteJobStore(tmp_path / "jobs.sqlite3")
+        store.initialize()
+        registry = JobRegistry(store)
 
         class InspectingQueueManager(QueueManager):
             async def put(self, job) -> None:  # type: ignore[no-untyped-def]
                 assert registry.get(job.id) is job
+                persisted = store.load_all()
+                assert len(persisted) == 1
+                assert persisted[0].status is JobStatus.AGUARDANDO
                 await super().put(job)
 
         manager = InspectingQueueManager()

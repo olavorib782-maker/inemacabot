@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import cast
 from job_event_bus import JobEventBus
 
@@ -28,6 +29,7 @@ from job_service import JobService
 from queue_manager import QueueManager
 from router import Router
 from skill_loader import SkillLoader
+from sqlite_job_store import SQLiteJobStore
 from worker_manager import WorkerManager
 from result_notifier import ResultNotifier
 from result_supervisor import ResultSupervisor
@@ -250,6 +252,16 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 async def start_workers(application: Application) -> None:
     """Inicia os workers quando a aplicação do Telegram estiver pronta."""
     services = cast(BotServices, application.bot_data[SERVICES_KEY])
+    restored_jobs = services.job_registry.restore()
+    for job in restored_jobs:
+        if job.status is JobStatus.PROCESSANDO:
+            job.status = JobStatus.ERRO
+            job.atualizada_em = datetime.now(timezone.utc)
+            job.resultado = "Processamento interrompido pela reinicialização do bot."
+            services.job_registry.update(job)
+        elif job.status is JobStatus.AGUARDANDO:
+            await services.queue_manager.put(job)
+
     await services.worker_manager.start()
     if services.result_supervisor is not None and services.result_supervisor_task is None:
         services.result_supervisor_task = asyncio.create_task(
@@ -272,7 +284,7 @@ async def stop_workers(application: Application) -> None:
 def create_application(settings: Settings) -> Application:
     """Monta a aplicação do Telegram e registra seus handlers."""
     queue_manager = QueueManager()
-    job_registry = JobRegistry()
+    job_registry = JobRegistry(SQLiteJobStore(settings.jobs_db_path))
     ai_client = AIClient(settings)
     skill_loader = SkillLoader("skills")
     agent_runner = AgentRunner(ai_client, skill_loader)
@@ -301,6 +313,7 @@ def create_application(settings: Settings) -> Application:
             queue_manager,
             agent_runner,
             event_bus=event_bus,
+            job_registry=job_registry,
         ),
         skill_loader=skill_loader,
         agent_runner=agent_runner,

@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 
 
 DEFAULT_HISTORY_MAX_MESSAGES = 20
+DEFAULT_JOBS_DB_PATH = "jobs.db"
 
 
 class ConfigurationError(ValueError):
@@ -31,6 +32,7 @@ class Settings:
     ai_model: str
     ai_system_prompt: str
     history_max_messages: int
+    jobs_db_path: str = DEFAULT_JOBS_DB_PATH
 
 
 def _required_value(name: str) -> str:
@@ -90,4 +92,6 @@ def load_config() -> Settings:
         ai_model=_required_value("AI_MODEL"),
         ai_system_prompt=_required_value("AI_SYSTEM_PROMPT"),
         history_max_messages=_positive_integer("HISTORY_MAX_MESSAGES", history_value),
+        jobs_db_path=os.getenv("JOBS_DB_PATH", DEFAULT_JOBS_DB_PATH).strip()
+        or DEFAULT_JOBS_DB_PATH,
     )

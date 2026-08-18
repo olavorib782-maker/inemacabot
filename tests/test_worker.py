@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from pathlib import Path
 
 import pytest
 
@@ -10,6 +11,8 @@ from queue_manager import QueueManager
 from workers.base_worker import BaseWorker
 from job_event_bus import JobEventBus
 from job_events import JobFailedEvent
+from job_registry import JobRegistry
+from sqlite_job_store import SQLiteJobStore
 
 def test_worker_pega_um_job_da_fila_correta() -> None:
     async def scenario() -> None:
@@ -92,6 +95,64 @@ def test_excecao_durante_processamento_coloca_job_em_erro() -> None:
         await _wait_until(lambda: job.status is JobStatus.ERRO)
 
         assert job.status is JobStatus.ERRO
+        await _cancel(task)
+
+    asyncio.run(scenario())
+
+
+def test_worker_persiste_processando_concluido_e_resultado(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        store = SQLiteJobStore(tmp_path / "jobs.sqlite3")
+        store.initialize()
+        registry = JobRegistry(store)
+        manager = QueueManager()
+        observed_statuses: list[JobStatus] = []
+
+        class PersistedWorker(BaseWorker):
+            async def process_job(self, job: Job) -> str:
+                observed_statuses.append(store.load_all()[0].status)
+                return "resultado persistido"
+
+        job = _make_job("mkitextos")
+        registry.add(job)
+        worker = PersistedWorker(manager, "mkitextos", job_registry=registry)
+        task = asyncio.create_task(worker.run())
+        await manager.put(job)
+        await _wait_until(lambda: job.status is JobStatus.CONCLUIDO)
+
+        persisted = store.load_all()[0]
+        assert observed_statuses == [JobStatus.PROCESSANDO]
+        assert persisted.status is JobStatus.CONCLUIDO
+        assert persisted.resultado == "resultado persistido"
+        await _cancel(task)
+
+    asyncio.run(scenario())
+
+
+def test_worker_persiste_processando_e_erro(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        store = SQLiteJobStore(tmp_path / "jobs.sqlite3")
+        store.initialize()
+        registry = JobRegistry(store)
+        manager = QueueManager()
+        observed_statuses: list[JobStatus] = []
+
+        class FailingPersistedWorker(BaseWorker):
+            async def process_job(self, job: Job) -> str:
+                observed_statuses.append(store.load_all()[0].status)
+                raise RuntimeError("falha esperada")
+
+        job = _make_job("mkivideos")
+        registry.add(job)
+        worker = FailingPersistedWorker(
+            manager, "mkivideos", job_registry=registry
+        )
+        task = asyncio.create_task(worker.run())
+        await manager.put(job)
+        await _wait_until(lambda: job.status is JobStatus.ERRO)
+
+        assert observed_statuses == [JobStatus.PROCESSANDO]
+        assert store.load_all()[0].status is JobStatus.ERRO
         await _cancel(task)
 
     asyncio.run(scenario())

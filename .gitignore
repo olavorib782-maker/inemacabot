@@ -15,3 +15,6 @@ Thumbs.db
 # Cache e temporários de testes
 .pytest_cache/
 pytest_temp/
+
+# Banco local de Jobs
+/jobs.db

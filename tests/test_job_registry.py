@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from job import Job
 from job_registry import JobRegistry
+from sqlite_job_store import SQLiteJobStore
 
 
 def test_add_e_get_retornam_a_mesma_instancia() -> None:
@@ -33,6 +36,36 @@ def test_add_substitui_job_com_o_mesmo_id() -> None:
     registry.add(replacement)
     assert registry.get(original.id) is replacement
     assert registry.list_all() == [replacement]
+
+
+def test_add_e_update_persistem_job(tmp_path: Path) -> None:
+    store = SQLiteJobStore(tmp_path / "jobs.sqlite3")
+    store.initialize()
+    registry = JobRegistry(store)
+    job = _make_job()
+
+    registry.add(job)
+    job.resultado = "pronto"
+    registry.update(job)
+
+    restored = store.load_all()
+    assert len(restored) == 1
+    assert restored[0].resultado == "pronto"
+
+
+def test_restore_reconstroi_dicionario_em_memoria(tmp_path: Path) -> None:
+    database_path = tmp_path / "jobs.sqlite3"
+    store = SQLiteJobStore(database_path)
+    store.initialize()
+    job = _make_job()
+    store.save(job)
+
+    registry = JobRegistry(SQLiteJobStore(database_path))
+    restored = registry.restore()
+
+    assert len(restored) == 1
+    assert registry.get(job.id) is restored[0]
+    assert registry.list_all() == restored
 
 
 def _make_job(titulo: str = "Trabalho") -> Job:

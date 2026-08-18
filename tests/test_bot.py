@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from pathlib import Path
 from types import SimpleNamespace
 
 from bot import (
@@ -20,6 +21,8 @@ from conversation_history import ConversationHistory
 from config import Settings
 from job import Job, JobStatus
 from job_registry import JobRegistry
+from queue_manager import QueueManager
+from sqlite_job_store import SQLiteJobStore
 from telegram.ext import CommandHandler
 
 
@@ -317,6 +320,8 @@ def test_callbacks_de_ciclo_de_vida_controlam_workers() -> None:
         application = SimpleNamespace(
             bot_data={SERVICES_KEY: SimpleNamespace(
                 worker_manager=worker_manager,
+                queue_manager=QueueManager(),
+                job_registry=JobRegistry(),
                 result_supervisor=result_supervisor,
                 result_supervisor_task=None,
             )}
@@ -338,7 +343,72 @@ def test_callbacks_de_ciclo_de_vida_controlam_workers() -> None:
     asyncio.run(scenario())
 
 
-def test_create_application_compartilha_dependencias_do_agent_runner() -> None:
+def test_startup_restaura_jobs_e_status_consulta_registry_restaurado(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        database_path = tmp_path / "jobs.sqlite3"
+        source_store = SQLiteJobStore(database_path)
+        source_store.initialize()
+        jobs = {
+            status: _make_status_job(status.value)
+            for status in JobStatus
+        }
+        for status, job in jobs.items():
+            job.status = status
+            source_store.save(job)
+
+        registry = JobRegistry(SQLiteJobStore(database_path))
+        queue_manager = QueueManager()
+        worker_manager = _FakeWorkerManager()
+        services = SimpleNamespace(
+            settings=_FakeSettings(),
+            job_registry=registry,
+            queue_manager=queue_manager,
+            worker_manager=worker_manager,
+            result_supervisor=None,
+            result_supervisor_task=None,
+        )
+        application = SimpleNamespace(bot_data={SERVICES_KEY: services})
+
+        await start_workers(application)
+
+        assert registry.get(jobs[JobStatus.AGUARDANDO].id) is not None
+        assert queue_manager.size("mkitextos") == 1
+        assert await queue_manager.get("mkitextos") is registry.get(
+            jobs[JobStatus.AGUARDANDO].id
+        )
+        restored_processing = registry.get(jobs[JobStatus.PROCESSANDO].id)
+        assert restored_processing is not None
+        assert restored_processing.status is JobStatus.ERRO
+        assert "reinicialização" in restored_processing.resultado
+        persisted = {
+            job.id: job for job in SQLiteJobStore(database_path).load_all()
+        }
+        assert persisted[jobs[JobStatus.PROCESSANDO].id].status is JobStatus.ERRO
+        assert queue_manager.size("mkitextos") == 0
+        assert worker_manager.start_calls == 1
+
+        message = _FakeMessage("/status", 42)
+        context = _context(services)
+        context.args = []
+        await status_command(_message_update(42, message), context)
+        assert message.replies == [
+            "Resumo dos Jobs\n\n"
+            "AGUARDANDO: 1\n"
+            "PROCESSANDO: 0\n"
+            "CONCLUIDO: 1\n"
+            "ERRO: 2\n"
+            "CANCELADO: 1\n"
+            "TOTAL: 5"
+        ]
+
+    asyncio.run(scenario())
+
+
+def test_create_application_compartilha_dependencias_do_agent_runner(
+    tmp_path: Path,
+) -> None:
     application = create_application(
         Settings(
             telegram_bot_token="123:test-token",
@@ -348,6 +418,7 @@ def test_create_application_compartilha_dependencias_do_agent_runner() -> None:
             ai_model="test-model",
             ai_system_prompt="Teste",
             history_max_messages=20,
+            jobs_db_path=str(tmp_path / "jobs.sqlite3"),
         )
     )
     services = application.bot_data[SERVICES_KEY]
@@ -357,11 +428,12 @@ def test_create_application_compartilha_dependencias_do_agent_runner() -> None:
     assert services.job_service.queue_manager is services.queue_manager
     assert services.job_service.job_registry is services.job_registry
     assert services.worker_manager.queue_manager is services.queue_manager
+    assert services.worker_manager.job_registry is services.job_registry
     assert services.worker_manager.agent_runner is services.agent_runner
     assert services.worker_manager.event_bus is services.result_supervisor.event_bus
 
 
-def test_create_application_registra_comando_status() -> None:
+def test_create_application_registra_comando_status(tmp_path: Path) -> None:
     application = create_application(
         Settings(
             telegram_bot_token="123:test-token",
@@ -371,6 +443,7 @@ def test_create_application_registra_comando_status() -> None:
             ai_model="test-model",
             ai_system_prompt="Teste",
             history_max_messages=20,
+            jobs_db_path=str(tmp_path / "jobs.sqlite3"),
         )
     )
 
