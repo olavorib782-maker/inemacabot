@@ -3,21 +3,19 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
-
-from job_events import JobCompletedEvent
+from job_events import JobEvent
 
 
 class JobEventBus:
     """Publica e distribui eventos de conclusão de Jobs."""
 
     def __init__(self) -> None:
-        self._events: asyncio.Queue[JobCompletedEvent] = asyncio.Queue()
+        self._events: asyncio.Queue[JobEvent] = asyncio.Queue()
 
-    async def publish(self, event: JobCompletedEvent) -> None:
+    async def publish(self, event: JobEvent) -> None:
         """Publica um evento para processamento posterior."""
         await self._events.put(event)
 
-    async def get(self) -> JobCompletedEvent:
+    async def get(self) -> JobEvent:
         """Aguarda e retorna o próximo evento."""
         return await self._events.get()

@@ -21,6 +21,11 @@ class ResultNotifier:
         message = self._build_message(job)
         await self.sender(job.chat_id, message)
 
+    async def notify_failure(self, job: Job) -> None:
+        """Informa com segurança que o processamento do Job falhou."""
+        message = self._build_failure_message(job)
+        await self.sender(job.chat_id, message)
+
     @staticmethod
     def _build_message(job: Job) -> str:
         """Monta a mensagem de resultado."""
@@ -29,4 +34,14 @@ class ResultNotifier:
             f"Job: {job.id}\n"
             f"Skill: {job.skill}\n\n"
             f"{job.resultado}"
+        )
+
+    @staticmethod
+    def _build_failure_message(job: Job) -> str:
+        """Monta uma mensagem de falha sem detalhes técnicos."""
+        return (
+            "❌ Não foi possível concluir o trabalho.\n\n"
+            f"Job: {job.id}\n"
+            f"Skill: {job.skill}\n\n"
+            "Tente novamente mais tarde."
         )

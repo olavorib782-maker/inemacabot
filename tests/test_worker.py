@@ -9,6 +9,7 @@ from job import Job, JobStatus
 from queue_manager import QueueManager
 from workers.base_worker import BaseWorker
 from job_event_bus import JobEventBus
+from job_events import JobFailedEvent
 
 def test_worker_pega_um_job_da_fila_correta() -> None:
     async def scenario() -> None:
@@ -91,6 +92,32 @@ def test_excecao_durante_processamento_coloca_job_em_erro() -> None:
         await _wait_until(lambda: job.status is JobStatus.ERRO)
 
         assert job.status is JobStatus.ERRO
+        await _cancel(task)
+
+    asyncio.run(scenario())
+
+
+def test_excecao_publica_apenas_evento_de_falha() -> None:
+    class FailingWorker(BaseWorker):
+        async def process_job(self, job: Job) -> str:
+            raise RuntimeError("falha de laboratório")
+
+    async def scenario() -> None:
+        manager = QueueManager()
+        event_bus = JobEventBus()
+        worker = FailingWorker(manager, "mkivideos", event_bus=event_bus)
+        job = _make_job("mkivideos")
+        task = asyncio.create_task(worker.run())
+
+        await manager.put(job)
+        event = await asyncio.wait_for(event_bus.get(), timeout=1)
+
+        assert isinstance(event, JobFailedEvent)
+        assert event.job is job
+        assert job.status is JobStatus.ERRO
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(event_bus.get(), timeout=0.01)
+
         await _cancel(task)
 
     asyncio.run(scenario())

@@ -32,3 +32,35 @@ async def test_notifica_resultado_para_chat_do_job():
     assert job.id in mensagens[0][1]
     assert "video_explicativo" in mensagens[0][1]
     assert "Resultado do teste." in mensagens[0][1]
+
+
+@pytest.mark.asyncio
+async def test_notifica_falha_sem_expor_detalhes_tecnicos():
+    mensagens = []
+
+    async def sender(chat_id: int, message: str) -> None:
+        mensagens.append((chat_id, message))
+
+    job = Job(
+        chat_id=123,
+        fila="mkivideos",
+        tipo="video",
+        skill="video_explicativo",
+        titulo="Teste",
+        descricao="Teste",
+        status=JobStatus.ERRO,
+        resultado="resultado parcial confidencial",
+    )
+    notifier = ResultNotifier(sender)
+
+    await notifier.notify_failure(job)
+
+    assert len(mensagens) == 1
+    chat_id, message = mensagens[0]
+    assert chat_id == 123
+    assert job.id in message
+    assert "video_explicativo" in message
+    assert "Traceback" not in message
+    assert "RuntimeError" not in message
+    assert "falha de laboratório" not in message
+    assert "resultado parcial confidencial" not in message

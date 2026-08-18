@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 from job import Job, JobStatus
 from job_event_bus import JobEventBus
-from job_events import JobCompletedEvent
+from job_events import JobCompletedEvent, JobFailedEvent
 from queue_manager import QueueManager
 
 
@@ -50,6 +50,9 @@ class BaseWorker:
                     job.id,
                     self.fila,
                 )
+
+                if self.event_bus is not None:
+                    await self.event_bus.publish(JobFailedEvent(job))
             else:
                 job.status = JobStatus.CONCLUIDO
                 job.atualizada_em = _now()

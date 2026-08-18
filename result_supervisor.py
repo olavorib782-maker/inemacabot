@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from job_event_bus import JobEventBus
-from job_events import JobCompletedEvent
+from job_events import JobCompletedEvent, JobEvent, JobFailedEvent
 from result_notifier import ResultNotifier
 
 
@@ -21,9 +21,12 @@ class ResultSupervisor:
     async def run(self) -> None:
         """Aguarda continuamente os eventos de conclusão."""
         while True:
-            event: JobCompletedEvent = await self.event_bus.get()
+            event = await self.event_bus.get()
             await self.handle(event)
 
-    async def handle(self, event: JobCompletedEvent) -> None:
+    async def handle(self, event: JobEvent) -> None:
         """Encaminha o resultado do Job para o notifier."""
-        await self.notifier.notify(event.job)
+        if isinstance(event, JobCompletedEvent):
+            await self.notifier.notify(event.job)
+        elif isinstance(event, JobFailedEvent):
+            await self.notifier.notify_failure(event.job)

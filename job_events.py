@@ -12,3 +12,13 @@ class JobCompletedEvent:
     """Evento emitido quando um Job termina o processamento."""
 
     job: Job
+
+
+@dataclass(frozen=True, slots=True)
+class JobFailedEvent:
+    """Evento emitido quando um Job falha durante o processamento."""
+
+    job: Job
+
+
+JobEvent = JobCompletedEvent | JobFailedEvent
