@@ -456,6 +456,47 @@ def test_text_message_guide_tones_nao_autorizada_nao_cria_job(
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize(
+    "message_text",
+    [
+        "Crie guide tones para Dm7 || Cmaj7",
+        "Crie guide tones para",
+        "Crie guide tones para C maj7 | G7",
+    ],
+)
+def test_text_message_guide_tones_invalido_responde_sem_job_nem_ia(
+    tmp_path: Path, message_text: str
+) -> None:
+    async def scenario() -> None:
+        queue = QueueManager()
+        registry = JobRegistry()
+        service = JobService(
+            Router(),
+            queue,
+            registry,
+            LeadsheetBuilder(),
+            ArtifactStore(tmp_path / "artifacts"),
+        )
+        ai_client = _FakeAIClient()
+        history = ConversationHistory(20)
+        message = _FakeMessage(message_text, 456)
+        services = _services_for_text(service, ai_client, history)  # type: ignore[arg-type]
+
+        await text_message(_message_update(42, message), _context(services))
+
+        assert message.replies == [
+            "Progressão inválida.\n"
+            "Use um acorde por compasso, separado por |.\n"
+            "Exemplo: Dm7 | G7 | Cmaj7 | Cmaj7"
+        ]
+        assert registry.list_all() == []
+        assert queue.size("mkimusica") == 0
+        assert ai_client.calls == []
+        assert history.get_messages() == []
+
+    asyncio.run(scenario())
+
+
 def test_text_message_normal_preserva_fluxo_da_ia() -> None:
     async def scenario() -> None:
         job_service = _FakeJobService(None)

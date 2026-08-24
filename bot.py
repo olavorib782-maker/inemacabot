@@ -32,8 +32,8 @@ from improvisor_client import (
     ImproVisorClientConfig,
 )
 from job_registry import JobRegistry
-from job_service import JobService
-from leadsheet_builder import LeadsheetBuilder
+from job_service import GuideTonesRequestError, JobService
+from leadsheet_builder import LeadsheetBuilder, LeadsheetValidationError
 from queue_manager import QueueManager
 from router import Router
 from skill_loader import SkillLoader
@@ -222,7 +222,15 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if message is None or not message.text:
         return
 
-    job = await services.job_service.submit(message.chat_id, message.text)
+    try:
+        job = await services.job_service.submit(message.chat_id, message.text)
+    except (GuideTonesRequestError, LeadsheetValidationError):
+        await message.reply_text(
+            "Progressão inválida.\n"
+            "Use um acorde por compasso, separado por |.\n"
+            "Exemplo: Dm7 | G7 | Cmaj7 | Cmaj7"
+        )
+        return
     if job is not None:
         await message.reply_text(
             "Trabalho recebido.\n"
