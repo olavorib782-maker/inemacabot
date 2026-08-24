@@ -73,3 +73,38 @@ async def test_supervisor_encaminha_falha_ao_metodo_correto():
 
     assert notifier.failed == [job]
     assert notifier.completed == []
+
+
+@pytest.mark.asyncio
+async def test_falha_de_envio_nao_encerra_supervisor() -> None:
+    class FlakyNotifier:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.received = []
+
+        async def notify(self, job: Job) -> None:
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("falha de envio")
+            self.received.append(job)
+
+        async def notify_failure(self, job: Job) -> None:
+            self.received.append(job)
+
+    bus = JobEventBus()
+    notifier = FlakyNotifier()
+    supervisor = ResultSupervisor(bus, notifier)  # type: ignore[arg-type]
+    first = Job(1, "mkitextos", "texto", "teste", "A", "A")
+    second = Job(1, "mkitextos", "texto", "teste", "B", "B")
+    task = asyncio.create_task(supervisor.run())
+
+    await bus.publish(JobCompletedEvent(first))
+    await bus.publish(JobCompletedEvent(second))
+    for _ in range(20):
+        if notifier.received:
+            break
+        await asyncio.sleep(0)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+    assert notifier.received == [second]

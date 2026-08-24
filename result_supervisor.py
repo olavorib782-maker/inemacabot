@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import logging
+
 from job_event_bus import JobEventBus
 from job_events import JobCompletedEvent, JobEvent, JobFailedEvent
 from result_notifier import ResultNotifier
+
+
+logger = logging.getLogger(__name__)
 
 
 class ResultSupervisor:
@@ -22,7 +27,10 @@ class ResultSupervisor:
         """Aguarda continuamente os eventos de conclusão."""
         while True:
             event = await self.event_bus.get()
-            await self.handle(event)
+            try:
+                await self.handle(event)
+            except Exception:
+                logger.exception("Falha ao notificar resultado de Job.")
 
     async def handle(self, event: JobEvent) -> None:
         """Encaminha o resultado do Job para o notifier."""

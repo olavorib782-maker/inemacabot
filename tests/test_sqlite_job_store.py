@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from job import Job, JobPriority, JobStatus
+from job_artifact import JobArtifact
 from sqlite_job_store import SQLiteJobStore
 
 
@@ -64,6 +65,55 @@ def test_save_atualiza_status_e_resultado(tmp_path: Path) -> None:
     assert restored[0].status is JobStatus.CONCLUIDO
     assert restored[0].resultado == "Resultado persistido"
     assert restored[0].atualizada_em == job.atualizada_em
+
+
+def test_persiste_e_restaura_artifacts(tmp_path: Path) -> None:
+    store = SQLiteJobStore(tmp_path / "jobs.sqlite3")
+    store.initialize()
+    job = _make_job()
+    job.artifacts.append(
+        JobArtifact("output", f"{job.id}/output.xml", "resultado.musicxml", "music/xml")
+    )
+
+    store.save(job)
+    restored = store.load_all()[0]
+
+    assert restored.artifacts == job.artifacts
+
+
+def test_initialize_migra_banco_antigo(tmp_path: Path) -> None:
+    database_path = tmp_path / "jobs.sqlite3"
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE jobs (
+                id TEXT PRIMARY KEY, chat_id INTEGER NOT NULL, fila TEXT NOT NULL,
+                tipo TEXT NOT NULL, skill TEXT NOT NULL, titulo TEXT NOT NULL,
+                descricao TEXT NOT NULL, status TEXT NOT NULL,
+                prioridade TEXT NOT NULL, criada_em TEXT NOT NULL,
+                atualizada_em TEXT NOT NULL, resultado TEXT NOT NULL DEFAULT ''
+            )
+            """
+        )
+
+    SQLiteJobStore(database_path).initialize()
+
+    with sqlite3.connect(database_path) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(jobs)")}
+    assert "artifacts_json" in columns
+
+
+def test_json_invalido_restaura_lista_vazia(tmp_path: Path) -> None:
+    store = SQLiteJobStore(tmp_path / "jobs.sqlite3")
+    store.initialize()
+    job = _make_job()
+    store.save(job)
+    with sqlite3.connect(store.database_path) as connection:
+        connection.execute(
+            "UPDATE jobs SET artifacts_json = ? WHERE id = ?", ("{invalido", job.id)
+        )
+
+    assert store.load_all()[0].artifacts == []
 
 
 def _make_job() -> Job:

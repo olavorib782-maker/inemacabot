@@ -18,3 +18,11 @@ pytest_temp/
 
 # Banco local de Jobs
 /jobs.db
+
+# Artefatos gerados pelos Jobs
+/artifacts/
+
+# Saídas locais da ponte Java
+/tools/improvisor_bridge/build/
+/tools/improvisor_bridge/output.xml
+*.class

@@ -8,9 +8,11 @@ from job import Job
 from queue_manager import QueueManager
 
 
-def test_as_tres_filas_existem() -> None:
+def test_as_quatro_filas_existem() -> None:
     manager = QueueManager()
-    assert set(manager.queues) == {"mkivideos", "mkitextos", "mkiservicos"}
+    assert set(manager.queues) == {
+        "mkivideos", "mkitextos", "mkiservicos", "mkimusica"
+    }
 
 
 def test_job_de_mkivideos_e_recuperado_da_mesma_fila() -> None:

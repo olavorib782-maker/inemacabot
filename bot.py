@@ -6,10 +6,12 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import cast
+from uuid import uuid4
 from job_event_bus import JobEventBus
 
-from telegram import Update
+from telegram import Bot, Update
 from telegram.ext import (
     Application,
     ApplicationBuilder,
@@ -21,9 +23,14 @@ from telegram.ext import (
 
 from ai_client import AIClient, AIClientError
 from agent_runner import AgentRunner
+from artifact_store import ArtifactStore
 from config import Settings, load_config
 from conversation_history import ConversationHistory
 from job import JobStatus
+from improvisor_client import (
+    ImproVisorClient,
+    ImproVisorClientConfig,
+)
 from job_registry import JobRegistry
 from job_service import JobService
 from queue_manager import QueueManager
@@ -94,6 +101,7 @@ class BotServices:
     worker_manager: WorkerManager
     skill_loader: SkillLoader
     agent_runner: AgentRunner
+    artifact_store: ArtifactStore
     result_notifier: ResultNotifier | None = None
     result_supervisor: ResultSupervisor | None = None
     result_supervisor_task: asyncio.Task[None] | None = None
@@ -243,6 +251,88 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             await message.reply_text(part)
 
 
+async def document_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Recebe um leadsheet autorizado e cria um Job musical."""
+    services = _services(context)
+    if not _is_authorized(update, services):
+        return
+
+    message = update.effective_message
+    if message is None or message.document is None:
+        return
+
+    document = message.document
+    original_name = document.file_name or ""
+    if not original_name.lower().endswith(".ls"):
+        await message.reply_text("Envie um arquivo .ls válido.")
+        return
+
+    if (
+        document.file_size is None
+        or document.file_size > services.settings.telegram_ls_max_file_bytes
+    ):
+        await message.reply_text("O arquivo .ls excede o tamanho permitido.")
+        return
+
+    friendly_name = _safe_document_filename(original_name)
+    job_id = str(uuid4())
+    relative_path, input_path = services.artifact_store.job_path(job_id, "input.ls")
+    partial_path = input_path.with_name("input.ls.part")
+
+    try:
+        telegram_file = await context.bot.get_file(document.file_id)
+        await telegram_file.download_to_drive(custom_path=partial_path)
+        partial_path.replace(input_path)
+        job = await services.job_service.submit_music_document(
+            chat_id=message.chat_id,
+            job_id=job_id,
+            friendly_filename=friendly_name,
+            relative_path=relative_path,
+        )
+    except Exception as error:
+        partial_path.unlink(missing_ok=True)
+        input_path.unlink(missing_ok=True)
+        logger.error(
+            "Falha ao receber leadsheet do Telegram (%s).", type(error).__name__
+        )
+        await message.reply_text("Não foi possível receber o arquivo no momento.")
+        return
+
+    await message.reply_text(
+        "Arquivo recebido.\n"
+        f"Fila: {job.fila}\n"
+        f"Skill: {job.skill}\n"
+        f"Status: {job.status.value}\n"
+        f"Job: {job.id}"
+    )
+
+
+def _safe_document_filename(filename: str) -> str:
+    """Mantém somente um nome amigável, nunca um caminho fornecido pelo usuário."""
+    basename = filename.replace("\\", "/").rsplit("/", 1)[-1]
+    cleaned = "".join(char for char in basename if char.isprintable()).strip()
+    if not cleaned.lower().endswith(".ls"):
+        return "input.ls"
+    return cleaned[:255] or "input.ls"
+
+
+async def _send_result_document(
+    bot: Bot,
+    chat_id: int,
+    path: Path,
+    filename: str,
+    caption: str,
+) -> None:
+    """Envia um artefato já resolvido pelo armazenamento controlado."""
+    with path.open("rb") as document:
+        await bot.send_document(
+            chat_id=chat_id,
+            document=document,
+            filename=filename,
+            caption=caption,
+        )
+
+
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Registra falhas não tratadas sem incluir dados sensíveis."""
@@ -289,6 +379,16 @@ def create_application(settings: Settings) -> Application:
     skill_loader = SkillLoader("skills")
     agent_runner = AgentRunner(ai_client, skill_loader)
     event_bus = JobEventBus()
+    artifact_store = ArtifactStore(settings.artifact_root)
+    improvisor_client = ImproVisorClient(
+        ImproVisorClientConfig(
+            java_executable=settings.improvisor_java_executable,
+            classpath=settings.improvisor_bridge_classpath,
+            improvisor_home=settings.improvisor_home,
+            user_home=settings.improvisor_user_home,
+            timeout_seconds=settings.improvisor_timeout_seconds,
+        )
+    )
     application = (
         ApplicationBuilder()
         .token(settings.telegram_bot_token)
@@ -300,7 +400,21 @@ def create_application(settings: Settings) -> Application:
         for part in split_message(text):
             await application.bot.send_message(chat_id=chat_id, text=part)
 
-    result_notifier = ResultNotifier(send_result)
+    async def send_result_document(
+        chat_id: int,
+        path: Path,
+        filename: str,
+        caption: str,
+    ) -> None:
+        await _send_result_document(
+            application.bot, chat_id, path, filename, caption
+        )
+
+    result_notifier = ResultNotifier(
+        send_result,
+        document_sender=send_result_document,
+        artifact_store=artifact_store,
+    )
     result_supervisor = ResultSupervisor(event_bus, result_notifier)
     application.bot_data[SERVICES_KEY] = BotServices(
         settings=settings,
@@ -314,9 +428,12 @@ def create_application(settings: Settings) -> Application:
             agent_runner,
             event_bus=event_bus,
             job_registry=job_registry,
+            improvisor_client=improvisor_client,
+            artifact_store=artifact_store,
         ),
         skill_loader=skill_loader,
         agent_runner=agent_runner,
+        artifact_store=artifact_store,
         result_notifier=result_notifier,
         result_supervisor=result_supervisor,
     )
@@ -326,6 +443,7 @@ def create_application(settings: Settings) -> Application:
     application.add_handler(CommandHandler("limpar", clear_command))
     application.add_handler(CommandHandler("status", status_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message))
+    application.add_handler(MessageHandler(filters.Document.ALL, document_message))
     application.add_error_handler(error_handler)
     return application
 
@@ -335,6 +453,8 @@ def main() -> None:
     logging.basicConfig(
         format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.INFO
     )
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     settings = load_config()
     create_application(settings).run_polling()
 

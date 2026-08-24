@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import closing
 from datetime import datetime
@@ -9,6 +10,7 @@ from pathlib import Path
 from threading import Lock
 
 from job import Job, JobPriority, JobStatus
+from job_artifact import JobArtifact
 
 
 class SQLiteJobStore:
@@ -35,10 +37,19 @@ class SQLiteJobStore:
                     prioridade TEXT NOT NULL,
                     criada_em TEXT NOT NULL,
                     atualizada_em TEXT NOT NULL,
-                    resultado TEXT NOT NULL DEFAULT ''
+                    resultado TEXT NOT NULL DEFAULT '',
+                    artifacts_json TEXT NOT NULL DEFAULT '[]'
                 )
                 """
             )
+            columns = {
+                row[1] for row in connection.execute("PRAGMA table_info(jobs)")
+            }
+            if "artifacts_json" not in columns:
+                connection.execute(
+                    "ALTER TABLE jobs ADD COLUMN artifacts_json "
+                    "TEXT NOT NULL DEFAULT '[]'"
+                )
 
     def save(self, job: Job) -> None:
         """Insere ou atualiza integralmente um Job em uma transação curta."""
@@ -55,14 +66,27 @@ class SQLiteJobStore:
             job.criada_em.isoformat(),
             job.atualizada_em.isoformat(),
             job.resultado,
+            json.dumps(
+                [
+                    {
+                        "role": artifact.role,
+                        "relative_path": artifact.relative_path,
+                        "filename": artifact.filename,
+                        "media_type": artifact.media_type,
+                    }
+                    for artifact in job.artifacts
+                ],
+                ensure_ascii=False,
+            ),
         )
         with self._lock, closing(self._connect()) as connection, connection:
             connection.execute(
                 """
                 INSERT INTO jobs (
                     id, chat_id, fila, tipo, skill, titulo, descricao,
-                    status, prioridade, criada_em, atualizada_em, resultado
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    status, prioridade, criada_em, atualizada_em, resultado,
+                    artifacts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     chat_id = excluded.chat_id,
                     fila = excluded.fila,
@@ -74,7 +98,8 @@ class SQLiteJobStore:
                     prioridade = excluded.prioridade,
                     criada_em = excluded.criada_em,
                     atualizada_em = excluded.atualizada_em,
-                    resultado = excluded.resultado
+                    resultado = excluded.resultado,
+                    artifacts_json = excluded.artifacts_json
                 """,
                 values,
             )
@@ -85,7 +110,8 @@ class SQLiteJobStore:
             rows = connection.execute(
                 """
                 SELECT id, chat_id, fila, tipo, skill, titulo, descricao,
-                       status, prioridade, criada_em, atualizada_em, resultado
+                       status, prioridade, criada_em, atualizada_em, resultado,
+                       artifacts_json
                 FROM jobs
                 ORDER BY criada_em, id
                 """
@@ -105,9 +131,33 @@ class SQLiteJobStore:
                 criada_em=datetime.fromisoformat(row[9]),
                 atualizada_em=datetime.fromisoformat(row[10]),
                 resultado=row[11],
+                artifacts=self._deserialize_artifacts(row[12]),
             )
             for row in rows
         ]
+
+    @staticmethod
+    def _deserialize_artifacts(value: str) -> list[JobArtifact]:
+        try:
+            items = json.loads(value)
+            if not isinstance(items, list):
+                return []
+            return [
+                JobArtifact(
+                    role=item["role"],
+                    relative_path=item["relative_path"],
+                    filename=item["filename"],
+                    media_type=item["media_type"],
+                )
+                for item in items
+                if isinstance(item, dict)
+                and all(
+                    isinstance(item.get(key), str)
+                    for key in ("role", "relative_path", "filename", "media_type")
+                )
+            ]
+        except (json.JSONDecodeError, TypeError):
+            return []
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database_path, timeout=5)

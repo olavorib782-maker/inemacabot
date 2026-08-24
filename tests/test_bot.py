@@ -5,11 +5,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from bot import (
     SERVICES_KEY,
     TELEGRAM_MAX_MESSAGE_LENGTH,
     _is_authorized,
+    _send_result_document,
     create_application,
+    document_message,
     help_command,
     split_message,
     start_workers,
@@ -18,6 +22,7 @@ from bot import (
     text_message,
 )
 from conversation_history import ConversationHistory
+from artifact_store import ArtifactStore
 from config import Settings
 from job import Job, JobStatus
 from job_registry import JobRegistry
@@ -29,6 +34,7 @@ from telegram.ext import CommandHandler
 @dataclass
 class _FakeSettings:
     telegram_allowed_user_id: int = 42
+    telegram_ls_max_file_bytes: int = 1024
 
 
 def _fake_update(user_id: int | None) -> SimpleNamespace:
@@ -61,6 +67,108 @@ def test_help_command_menciona_status() -> None:
         )
         assert len(message.replies) == 1
         assert "/status" in message.replies[0]
+
+    asyncio.run(scenario())
+
+
+def test_documento_ls_autorizado_e_salvo_e_enfileirado(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        queue = QueueManager()
+        registry = JobRegistry()
+        store = ArtifactStore(tmp_path / "artifacts")
+        services = SimpleNamespace(
+            settings=_FakeSettings(),
+            artifact_store=store,
+            job_service=__import__("job_service").JobService(
+                __import__("router").Router(), queue, registry
+            ),
+        )
+        message = _FakeDocumentMessage("../Meu Tema.ls", 100, 42)
+        bot = _FakeTelegramBot("(title Teste)")
+
+        await document_message(
+            _document_update(42, message), _document_context(services, bot)
+        )
+
+        assert bot.get_file_calls == ["file-id"]
+        assert queue.size("mkimusica") == 1
+        job = await queue.get("mkimusica")
+        assert registry.get(job.id) is job
+        assert job.artifacts[0].relative_path == f"{job.id}/input.ls"
+        assert job.artifacts[0].filename == "Meu Tema.ls"
+        saved_path = store.resolve(job.artifacts[0].relative_path)
+        assert saved_path.read_text(encoding="utf-8") == "(title Teste)"
+        assert saved_path.name == "input.ls"
+        assert message.replies[0].startswith("Arquivo recebido.\nFila: mkimusica")
+
+    asyncio.run(scenario())
+
+
+def test_documento_nao_autorizado_nao_dispara_download(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        services = _document_services(tmp_path)
+        message = _FakeDocumentMessage("teste.ls", 100, 42)
+        bot = _FakeTelegramBot("conteúdo")
+
+        await document_message(
+            _document_update(999, message), _document_context(services, bot)
+        )
+
+        assert bot.get_file_calls == []
+        assert message.replies == []
+        assert services.job_service.queue_manager.size("mkimusica") == 0
+
+    asyncio.run(scenario())
+
+
+def test_documento_com_extensao_invalida_e_rejeitado(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        services = _document_services(tmp_path)
+        message = _FakeDocumentMessage("partitura.pdf", 100, 42)
+        bot = _FakeTelegramBot("conteúdo")
+
+        await document_message(
+            _document_update(42, message), _document_context(services, bot)
+        )
+
+        assert bot.get_file_calls == []
+        assert message.replies == ["Envie um arquivo .ls válido."]
+
+    asyncio.run(scenario())
+
+
+def test_documento_acima_do_limite_e_rejeitado(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        services = _document_services(tmp_path)
+        message = _FakeDocumentMessage("teste.ls", 1025, 42)
+        bot = _FakeTelegramBot("conteúdo")
+
+        await document_message(
+            _document_update(42, message), _document_context(services, bot)
+        )
+
+        assert bot.get_file_calls == []
+        assert message.replies == ["O arquivo .ls excede o tamanho permitido."]
+
+    asyncio.run(scenario())
+
+
+def test_send_document_recebe_nome_musicxml(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        path = tmp_path / "output.xml"
+        path.write_text("<score-partwise/>", encoding="utf-8")
+        bot = _RecordingDocumentBot()
+
+        await _send_result_document(
+            bot, 42, path, "resultado.musicxml", "Leadsheet convertido para MusicXML."
+        )
+
+        assert len(bot.calls) == 1
+        call = bot.calls[0]
+        assert call["chat_id"] == 42
+        assert call["filename"] == "resultado.musicxml"
+        assert call["caption"] == "Leadsheet convertido para MusicXML."
+        assert call["content"] == b"<score-partwise/>"
 
     asyncio.run(scenario())
 
@@ -418,6 +526,11 @@ def test_create_application_compartilha_dependencias_do_agent_runner(
             ai_model="test-model",
             ai_system_prompt="Teste",
             history_max_messages=20,
+            improvisor_java_executable="java-test",
+            improvisor_bridge_classpath="bridge;improvisor.jar",
+            improvisor_home=tmp_path / "improvisor",
+            improvisor_user_home=tmp_path / "user-home",
+            improvisor_timeout_seconds=12,
             jobs_db_path=str(tmp_path / "jobs.sqlite3"),
         )
     )
@@ -431,6 +544,8 @@ def test_create_application_compartilha_dependencias_do_agent_runner(
     assert services.worker_manager.job_registry is services.job_registry
     assert services.worker_manager.agent_runner is services.agent_runner
     assert services.worker_manager.event_bus is services.result_supervisor.event_bus
+    assert services.worker_manager.improvisor_client is not None
+    assert services.worker_manager.improvisor_client._config.java_executable == "java-test"
 
 
 def test_create_application_registra_comando_status(tmp_path: Path) -> None:
@@ -443,6 +558,11 @@ def test_create_application_registra_comando_status(tmp_path: Path) -> None:
             ai_model="test-model",
             ai_system_prompt="Teste",
             history_max_messages=20,
+            improvisor_java_executable="java-test",
+            improvisor_bridge_classpath="bridge;improvisor.jar",
+            improvisor_home=tmp_path / "improvisor",
+            improvisor_user_home=tmp_path / "user-home",
+            improvisor_timeout_seconds=12,
             jobs_db_path=str(tmp_path / "jobs.sqlite3"),
         )
     )
@@ -454,6 +574,47 @@ def test_create_application_registra_comando_status(tmp_path: Path) -> None:
     )
 
 
+def test_create_application_cria_um_cliente_e_compartilha_com_music_worker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = object()
+    configs: list[object] = []
+
+    def create_client(config: object) -> object:
+        configs.append(config)
+        return client
+
+    monkeypatch.setattr("bot.ImproVisorClient", create_client)
+    application = create_application(
+        Settings(
+            telegram_bot_token="123:test-token",
+            telegram_allowed_user_id=42,
+            ai_api_key="test-key",
+            ai_base_url="https://example.test/v1",
+            ai_model="test-model",
+            ai_system_prompt="Teste",
+            history_max_messages=20,
+            improvisor_java_executable="java-test",
+            improvisor_bridge_classpath="bridge;improvisor.jar",
+            improvisor_home=tmp_path / "improvisor",
+            improvisor_user_home=tmp_path / "user-home",
+            improvisor_timeout_seconds=12,
+            jobs_db_path=str(tmp_path / "jobs.sqlite3"),
+        )
+    )
+    manager = application.bot_data[SERVICES_KEY].worker_manager
+
+    async def scenario() -> None:
+        await manager.start()
+        assert manager.workers["mkimusica"].improvisor_client is client
+        await manager.stop()
+
+    asyncio.run(scenario())
+    assert configs and len(configs) == 1
+    assert manager.improvisor_client is client
+
+
 class _FakeMessage:
     def __init__(self, text: str, chat_id: int) -> None:
         self.text = text
@@ -462,6 +623,43 @@ class _FakeMessage:
 
     async def reply_text(self, text: str) -> None:
         self.replies.append(text)
+
+
+class _FakeDocumentMessage(_FakeMessage):
+    def __init__(self, filename: str, file_size: int, chat_id: int) -> None:
+        super().__init__("", chat_id)
+        self.document = SimpleNamespace(
+            file_name=filename,
+            file_size=file_size,
+            file_id="file-id",
+        )
+
+
+class _FakeTelegramFile:
+    def __init__(self, content: str) -> None:
+        self.content = content
+
+    async def download_to_drive(self, custom_path: Path) -> None:
+        Path(custom_path).write_text(self.content, encoding="utf-8")
+
+
+class _FakeTelegramBot:
+    def __init__(self, content: str) -> None:
+        self.content = content
+        self.get_file_calls: list[str] = []
+
+    async def get_file(self, file_id: str) -> _FakeTelegramFile:
+        self.get_file_calls.append(file_id)
+        return _FakeTelegramFile(self.content)
+
+
+class _RecordingDocumentBot:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def send_document(self, **kwargs: object) -> None:
+        document = kwargs["document"]
+        self.calls.append({**kwargs, "content": document.read()})  # type: ignore[union-attr]
 
 
 class _FakeJobService:
@@ -538,6 +736,28 @@ def _services_for_text(
 
 def _message_update(user_id: int, message: _FakeMessage) -> SimpleNamespace:
     return SimpleNamespace(effective_user=SimpleNamespace(id=user_id), effective_message=message)
+
+
+def _document_update(user_id: int, message: _FakeDocumentMessage) -> SimpleNamespace:
+    return _message_update(user_id, message)
+
+
+def _document_context(services: SimpleNamespace, bot: _FakeTelegramBot) -> SimpleNamespace:
+    context = _context(services)
+    context.bot = bot
+    return context
+
+
+def _document_services(tmp_path: Path) -> SimpleNamespace:
+    from job_service import JobService
+    from router import Router
+
+    queue = QueueManager()
+    return SimpleNamespace(
+        settings=_FakeSettings(),
+        artifact_store=ArtifactStore(tmp_path / "artifacts"),
+        job_service=JobService(Router(), queue, JobRegistry()),
+    )
 
 
 def _context(services: SimpleNamespace) -> SimpleNamespace:

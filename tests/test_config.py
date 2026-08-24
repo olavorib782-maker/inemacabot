@@ -12,6 +12,11 @@ REQUIRED_ENV = {
     "AI_BASE_URL": "https://api.openai.com/v1",
     "AI_MODEL": "gpt-4o-mini",
     "AI_SYSTEM_PROMPT": "Você é um assistente prestativo.",
+    "IMPROVISOR_JAVA_EXECUTABLE": "java",
+    "IMPROVISOR_BRIDGE_CLASSPATH": "bridge;improvisor.jar",
+    "IMPROVISOR_HOME": "improvisor",
+    "IMPROVISOR_USER_HOME": "improvisor-user",
+    "IMPROVISOR_TIMEOUT_SECONDS": "30",
 }
 
 
@@ -49,6 +54,18 @@ def test_load_config_com_todas_variaveis_validas(
     assert settings.ai_model == REQUIRED_ENV["AI_MODEL"]
     assert settings.history_max_messages == 20
     assert settings.jobs_db_path == "jobs.db"
+    assert settings.improvisor_java_executable == "java"
+    assert settings.improvisor_bridge_classpath == "bridge;improvisor.jar"
+    assert settings.improvisor_timeout_seconds == 30
+
+
+def test_load_config_falha_com_timeout_do_improvisor_invalido(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_env(monkeypatch, {"IMPROVISOR_TIMEOUT_SECONDS": "zero"})
+
+    with pytest.raises(ConfigurationError, match="IMPROVISOR_TIMEOUT_SECONDS"):
+        load_config()
 
 
 @pytest.mark.parametrize("missing_key", sorted(REQUIRED_ENV.keys()))
@@ -117,3 +134,17 @@ def test_load_config_usa_caminho_de_jobs_customizado(
     settings = load_config()
 
     assert settings.jobs_db_path == "dados/jobs.sqlite3"
+
+
+def test_load_config_usa_artifact_root_customizado(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_env(monkeypatch, {"ARTIFACT_ROOT": "dados/artifacts"})
+    assert load_config().artifact_root == "dados/artifacts"
+
+
+def test_load_config_usa_limite_ls_customizado(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_env(monkeypatch, {"TELEGRAM_LS_MAX_FILE_BYTES": "2048"})
+    assert load_config().telegram_ls_max_file_bytes == 2048

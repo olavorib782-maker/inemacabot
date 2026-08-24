@@ -26,6 +26,11 @@ def _normalize(message: str) -> str:
 class Router:
     """Identifica trabalhos conhecidos sem usar serviços externos."""
 
+    _MUSIC_SKILLS = {
+        "ls para musicxml": "leadsheet_para_musicxml",
+        "converter leadsheet": "leadsheet_para_musicxml",
+        "converter para musicxml": "leadsheet_para_musicxml",
+    }
     _SERVICE_SKILLS = {
         "pesquisa": "pesquisa",
         "pesquise": "pesquisa",
@@ -49,6 +54,10 @@ class Router:
     def route(self, message: str) -> RouteDecision:
         """Retorna a fila correspondente ou informa que a mensagem não é um trabalho."""
         normalized_message = _normalize(message)
+
+        decision = self._match(normalized_message, self._MUSIC_SKILLS, "mkimusica", "musica")
+        if decision is not None:
+            return decision
 
         decision = self._match(normalized_message, self._SERVICE_SKILLS, "mkiservicos", "servico")
         if decision is not None:

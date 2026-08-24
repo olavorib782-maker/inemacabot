@@ -5,10 +5,13 @@ from __future__ import annotations
 import asyncio
 
 from agent_runner import AgentRunner
+from artifact_store import ArtifactStore
+from improvisor_client import ImproVisorClient
 from job_event_bus import JobEventBus
 from job_registry import JobRegistry
 from queue_manager import QueueManager
 from workers.base_worker import BaseWorker
+from workers.music_worker import MusicWorker
 from workers.service_worker import ServiceWorker
 from workers.text_worker import TextWorker
 from workers.video_worker import VideoWorker
@@ -23,11 +26,17 @@ class WorkerManager:
         agent_runner: AgentRunner | None = None,
         event_bus: JobEventBus | None = None,
         job_registry: JobRegistry | None = None,
+        improvisor_client: ImproVisorClient | None = None,
+        artifact_store: ArtifactStore | None = None,
     ) -> None:
         self.queue_manager = queue_manager
         self.agent_runner = agent_runner
         self.event_bus = event_bus or JobEventBus()
         self.job_registry = job_registry
+        if improvisor_client is None:
+            raise ValueError("ImproVisorClient é obrigatório no WorkerManager.")
+        self.improvisor_client = improvisor_client
+        self.artifact_store = artifact_store or ArtifactStore("artifacts")
         self.workers: dict[str, BaseWorker] = {}
         self.tasks: dict[str, asyncio.Task[None]] = {}
 
@@ -50,6 +59,13 @@ class WorkerManager:
             ),
             "mkiservicos": ServiceWorker(
                 self.queue_manager,
+                event_bus=self.event_bus,
+                job_registry=self.job_registry,
+            ),
+            "mkimusica": MusicWorker(
+                self.queue_manager,
+                improvisor_client=self.improvisor_client,
+                artifact_store=self.artifact_store,
                 event_bus=self.event_bus,
                 job_registry=self.job_registry,
             ),

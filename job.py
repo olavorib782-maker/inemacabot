@@ -8,8 +8,10 @@ from enum import Enum
 from typing import Any
 from uuid import uuid4
 
+from job_artifact import JobArtifact
 
-VALID_QUEUES = frozenset({"mkivideos", "mkitextos", "mkiservicos"})
+
+VALID_QUEUES = frozenset({"mkivideos", "mkitextos", "mkiservicos", "mkimusica"})
 
 
 class JobStatus(str, Enum):
@@ -53,6 +55,7 @@ class Job:
     criada_em: datetime = field(default_factory=_now)
     atualizada_em: datetime = field(default_factory=_now)
     resultado: str = ""
+    artifacts: list[JobArtifact] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.fila not in VALID_QUEUES:

@@ -64,6 +64,30 @@ def test_job_e_persistido_antes_de_ser_enfileirado(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
+def test_documento_musical_e_persistido_antes_de_mkimusica(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        store = SQLiteJobStore(tmp_path / "jobs.sqlite3")
+        store.initialize()
+        registry = JobRegistry(store)
+
+        class InspectingQueueManager(QueueManager):
+            async def put(self, job) -> None:  # type: ignore[no-untyped-def]
+                restored = store.load_all()
+                assert restored[0].artifacts[0].relative_path == "job-1/input.ls"
+                await super().put(job)
+
+        manager = InspectingQueueManager()
+        service = JobService(Router(), manager, registry)
+        job = await service.submit_music_document(
+            42, "job-1", "original.ls", "job-1/input.ls"
+        )
+
+        assert job.fila == "mkimusica"
+        assert await manager.get("mkimusica") is job
+
+    asyncio.run(scenario())
+
+
 def test_registry_observa_as_mutacoes_feitas_pelo_worker() -> None:
     class ControlledWorker(BaseWorker):
         def __init__(self, manager: QueueManager) -> None:

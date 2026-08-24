@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from router import Router
 
 
@@ -30,6 +32,23 @@ def test_pesquisa_vai_para_mkiservicos() -> None:
     assert decision.fila == "mkiservicos"
     assert decision.tipo == "servico"
     assert decision.skill == "pesquisa"
+
+
+@pytest.mark.parametrize(
+    "message",
+    ["ls para musicxml", "converter leadsheet", "converter para musicxml"],
+)
+def test_intencao_musical_especifica_vai_para_mkimusica(message: str) -> None:
+    decision = Router().route(message)
+    assert decision.is_job is True
+    assert decision.fila == "mkimusica"
+    assert decision.tipo == "musica"
+    assert decision.skill == "leadsheet_para_musicxml"
+
+
+@pytest.mark.parametrize("message", ["quero ouvir música", "mostre uma partitura"])
+def test_termos_musicais_genericos_nao_sao_roteados(message: str) -> None:
+    assert Router().route(message).is_job is False
 
 
 def test_router_ignora_maiusculas_e_minusculas() -> None:

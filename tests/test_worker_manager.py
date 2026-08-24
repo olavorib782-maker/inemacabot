@@ -2,24 +2,44 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from pathlib import Path
 
+import pytest
+
+from artifact_store import ArtifactStore
 from job import Job, JobStatus
 from queue_manager import QueueManager
 from worker_manager import WorkerManager
 from workers.service_worker import ServiceWorker
 from workers.text_worker import TextWorker
 from workers.video_worker import VideoWorker
+from workers.music_worker import MusicWorker
 
 
-def test_worker_manager_cria_os_tres_workers() -> None:
+_IMPROVISOR_CLIENT = object()
+
+
+def _manager(
+    queue_manager: QueueManager,
+    **kwargs: object,
+) -> WorkerManager:
+    return WorkerManager(
+        queue_manager,
+        improvisor_client=_IMPROVISOR_CLIENT,  # type: ignore[arg-type]
+        **kwargs,  # type: ignore[arg-type]
+    )
+
+
+def test_worker_manager_cria_os_quatro_workers() -> None:
     async def scenario() -> None:
-        manager = WorkerManager(QueueManager())
+        manager = _manager(QueueManager())
 
         await manager.start()
 
         assert isinstance(manager.workers["mkivideos"], VideoWorker)
         assert isinstance(manager.workers["mkitextos"], TextWorker)
         assert isinstance(manager.workers["mkiservicos"], ServiceWorker)
+        assert isinstance(manager.workers["mkimusica"], MusicWorker)
         await manager.stop()
 
     asyncio.run(scenario())
@@ -27,7 +47,7 @@ def test_worker_manager_cria_os_tres_workers() -> None:
 
 def test_worker_manager_sem_agent_runner_preserva_worker_de_laboratorio() -> None:
     async def scenario() -> None:
-        manager = WorkerManager(QueueManager())
+        manager = _manager(QueueManager())
 
         await manager.start()
 
@@ -40,7 +60,7 @@ def test_worker_manager_sem_agent_runner_preserva_worker_de_laboratorio() -> Non
 def test_worker_manager_injeta_mesma_instancia_no_video_worker() -> None:
     async def scenario() -> None:
         agent_runner = _FakeAgentRunner("Resposta do agente")
-        manager = WorkerManager(QueueManager(), agent_runner=agent_runner)
+        manager = _manager(QueueManager(), agent_runner=agent_runner)
 
         await manager.start()
 
@@ -54,14 +74,34 @@ def test_worker_manager_injeta_mesma_instancia_no_video_worker() -> None:
     asyncio.run(scenario())
 
 
+def test_worker_manager_injeta_cliente_no_music_worker(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        client = object()
+        manager = WorkerManager(
+            QueueManager(),
+            improvisor_client=client,  # type: ignore[arg-type]
+            artifact_store=ArtifactStore(tmp_path),
+        )
+        await manager.start()
+        assert manager.workers["mkimusica"].improvisor_client is client
+        await manager.stop()
+
+    asyncio.run(scenario())
+
+
+def test_worker_manager_rejeita_cliente_ausente() -> None:
+    with pytest.raises(ValueError, match="ImproVisorClient"):
+        WorkerManager(QueueManager())
+
+
 def test_start_inicia_tres_tasks_ativas_com_filas_vazias() -> None:
     async def scenario() -> None:
-        manager = WorkerManager(QueueManager())
+        manager = _manager(QueueManager())
 
         await manager.start()
         await asyncio.sleep(0)
 
-        assert len(manager.tasks) == 3
+        assert len(manager.tasks) == 4
         assert all(not task.done() for task in manager.tasks.values())
         await manager.stop()
 
@@ -71,7 +111,7 @@ def test_start_inicia_tres_tasks_ativas_com_filas_vazias() -> None:
 def test_video_worker_processa_job_da_fila_de_videos() -> None:
     async def scenario() -> None:
         queue_manager = QueueManager()
-        manager = WorkerManager(queue_manager)
+        manager = _manager(queue_manager)
         job = _make_job("mkivideos")
 
         await manager.start()
@@ -88,7 +128,7 @@ def test_video_worker_usa_agent_runner_quando_fornecido_ao_manager() -> None:
     async def scenario() -> None:
         queue_manager = QueueManager()
         agent_runner = _FakeAgentRunner("Resultado do AgentRunner")
-        manager = WorkerManager(queue_manager, agent_runner=agent_runner)
+        manager = _manager(queue_manager, agent_runner=agent_runner)
         job = _make_job("mkivideos")
 
         await manager.start()
@@ -105,7 +145,7 @@ def test_video_worker_usa_agent_runner_quando_fornecido_ao_manager() -> None:
 def test_text_worker_processa_job_da_fila_de_textos() -> None:
     async def scenario() -> None:
         queue_manager = QueueManager()
-        manager = WorkerManager(queue_manager)
+        manager = _manager(queue_manager)
         job = _make_job("mkitextos")
 
         await manager.start()
@@ -121,7 +161,7 @@ def test_text_worker_processa_job_da_fila_de_textos() -> None:
 def test_service_worker_processa_job_da_fila_de_servicos() -> None:
     async def scenario() -> None:
         queue_manager = QueueManager()
-        manager = WorkerManager(queue_manager)
+        manager = _manager(queue_manager)
         job = _make_job("mkiservicos")
 
         await manager.start()
@@ -136,7 +176,7 @@ def test_service_worker_processa_job_da_fila_de_servicos() -> None:
 
 def test_stop_encerra_workers_e_limpa_referencias() -> None:
     async def scenario() -> None:
-        manager = WorkerManager(QueueManager())
+        manager = _manager(QueueManager())
 
         await manager.start()
         tasks = tuple(manager.tasks.values())
@@ -151,7 +191,7 @@ def test_stop_encerra_workers_e_limpa_referencias() -> None:
 
 def test_start_nao_duplica_workers_sem_stop() -> None:
     async def scenario() -> None:
-        manager = WorkerManager(QueueManager())
+        manager = _manager(QueueManager())
 
         await manager.start()
         initial_workers = manager.workers
@@ -160,7 +200,7 @@ def test_start_nao_duplica_workers_sem_stop() -> None:
 
         assert manager.workers is initial_workers
         assert manager.tasks is initial_tasks
-        assert len(manager.tasks) == 3
+        assert len(manager.tasks) == 4
         await manager.stop()
 
     asyncio.run(scenario())
@@ -168,7 +208,7 @@ def test_start_nao_duplica_workers_sem_stop() -> None:
 
 def test_stop_e_seguro_sem_workers_ativos() -> None:
     async def scenario() -> None:
-        manager = WorkerManager(QueueManager())
+        manager = _manager(QueueManager())
 
         await manager.stop()
 
