@@ -36,6 +36,17 @@ class MusicWorker(BaseWorker):
         self.artifact_store = artifact_store
 
     async def process_job(self, job: Job) -> str:
+        if job.skill == "leadsheet_para_musicxml":
+            operation = self.improvisor_client.convert
+            output_filename = "resultado.musicxml"
+            success_message = "Leadsheet convertido para MusicXML."
+        elif job.skill == "guide_tones":
+            operation = self.improvisor_client.generate_guidetones
+            output_filename = "guide_tones.musicxml"
+            success_message = "Guide tones gerados com sucesso."
+        else:
+            raise ValueError("Skill musical não suportada.")
+
         input_artifact = next(
             (
                 artifact
@@ -53,14 +64,14 @@ class MusicWorker(BaseWorker):
             job.id, "output.xml"
         )
 
-        await self.improvisor_client.convert(input_path, output_path)
+        await operation(input_path, output_path)
 
         job.artifacts.append(
             JobArtifact(
                 role="output",
                 relative_path=output_relative,
-                filename="resultado.musicxml",
+                filename=output_filename,
                 media_type=self._OUTPUT_MEDIA_TYPE,
             )
         )
-        return "Leadsheet convertido para MusicXML."
+        return success_message

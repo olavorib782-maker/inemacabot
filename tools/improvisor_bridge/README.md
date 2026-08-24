@@ -1,8 +1,9 @@
 # Ponte headless do Impro-Visor
 
-Protótipo Java isolado para converter um leadsheet `.ls` em MusicXML usando o
-parser e o exportador oficiais do Impro-Visor. Ele não inicializa
-`imp.ImproVisor`, não cria `Notate` e não usa MIDI.
+Protótipo Java isolado para converter um leadsheet `.ls` em MusicXML ou gerar
+uma linha de guide tones sobre sua harmonia. As duas operações usam o parser e
+o exportador oficiais do Impro-Visor. A ponte não inicializa `imp.ImproVisor`,
+não cria `Notate` e não usa MIDI.
 
 A ponte carrega `My.prefs`, `My.voc` e os estilos antes de criar o `Score`, pois
 o modelo do Impro-Visor depende desses valores padrão. A carga de `My.voc`
@@ -55,6 +56,8 @@ No Linux, substitua `;` por `:` no classpath.
 
 ## Executar
 
+### Converter um leadsheet
+
 PowerShell:
 
 ```powershell
@@ -71,10 +74,45 @@ java `
   "tools\improvisor_bridge\output.xml"
 ```
 
+O formato original com dois argumentos continua sendo a operação de conversão
+simples:
+
+```text
+ImproVisorBridge <input.ls> <output.xml>
+```
+
+### Gerar guide tones
+
+```powershell
+java `
+  -Djava.awt.headless=true `
+  "-Duser.home=$improvisorUserHome" `
+  -Xmx256m `
+  -cp $runtimeClasspath `
+  ImproVisorBridge `
+  guidetones `
+  "input.ls" `
+  "guide-tones.xml"
+```
+
+A operação carrega a harmonia do `.ls`, gera uma única linha monofônica e
+substitui somente as partes melódicas do `Score` antes de exportar. Os acordes,
+métrica e demais metadados permanecem no score.
+
+Os parâmetros fixos deste primeiro protótipo são: direção sem preferência,
+grau inicial 3, tessitura MIDI 55 a 79, uma nota por acorde, uma linha, somente
+chord tones e repetição consecutiva de altura desabilitada. A sintaxe é:
+
+```text
+ImproVisorBridge guidetones <input.ls> <output.xml>
+```
+
 Os caminhos são argumentos distintos do processo, não texto para um shell
-interpretar. Uma integração Python futura deve usar `asyncio.create_subprocess_exec`
-com `shell=False`, impor timeout, limitar concorrência e usar um diretório
-temporário por conversão. Este protótipo não adiciona integração Python.
+interpretar. A integração em `improvisor_client.py` usa
+`asyncio.create_subprocess_exec` sem shell, aplica timeout e valida o MusicXML.
+O `ImproVisorClient` suporta tanto a conversão legada quanto
+`generate_guidetones()`, mantendo esta bridge como a fronteira com o Java e o
+Impro-Visor.
 
 A ponte retorna `0` em caso de sucesso, `1` em falha de leitura/conversão e `2`
 para uso incorreto ou ausência de `-Djava.awt.headless=true`.

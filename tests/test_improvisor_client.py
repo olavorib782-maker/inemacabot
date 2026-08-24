@@ -100,6 +100,90 @@ async def test_conversao_bem_sucedida(
 
 
 @pytest.mark.asyncio
+async def test_generate_guidetones_chama_operacao_sem_shell(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "guide-tones.xml"
+    process = _FakeProcess(
+        on_communicate=lambda: output.write_text("<score-partwise/>", encoding="utf-8")
+    )
+    calls = _install_process(monkeypatch, process)
+
+    result = await ImproVisorClient(_config(tmp_path)).generate_guidetones(
+        _input(tmp_path), output
+    )
+
+    assert result.output_path == output
+    assert result.stdout == "concluido"
+    args, kwargs = calls[0]
+    assert args[-4:] == (
+        "ImproVisorBridge",
+        "guidetones",
+        str(tmp_path / "entrada.ls"),
+        str(output),
+    )
+    assert kwargs["stdout"] == asyncio.subprocess.PIPE
+    assert kwargs["stderr"] == asyncio.subprocess.PIPE
+    assert "shell" not in kwargs
+
+
+@pytest.mark.asyncio
+async def test_generate_guidetones_exit_code_diferente_de_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_process(monkeypatch, _FakeProcess(returncode=7))
+
+    with pytest.raises(ImproVisorClientError, match="conversão musical falhou"):
+        await ImproVisorClient(_config(tmp_path)).generate_guidetones(
+            _input(tmp_path), tmp_path / "saida.xml"
+        )
+
+
+@pytest.mark.asyncio
+async def test_generate_guidetones_timeout_mata_e_aguarda_processo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    process = _FakeProcess(never_finishes=True)
+    _install_process(monkeypatch, process)
+
+    with pytest.raises(ImproVisorClientError, match="tempo limite"):
+        await ImproVisorClient(
+            _config(tmp_path, timeout=0.01)
+        ).generate_guidetones(_input(tmp_path), tmp_path / "saida.xml")
+
+    assert process.killed is True
+    assert process.waited is True
+
+
+@pytest.mark.asyncio
+async def test_generate_guidetones_xml_nao_criado(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_process(monkeypatch, _FakeProcess())
+
+    with pytest.raises(ImproVisorClientError, match="não gerou"):
+        await ImproVisorClient(_config(tmp_path)).generate_guidetones(
+            _input(tmp_path), tmp_path / "saida.xml"
+        )
+
+
+@pytest.mark.asyncio
+async def test_generate_guidetones_xml_invalido(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "saida.xml"
+    process = _FakeProcess(
+        on_communicate=lambda: output.write_text("<score>", encoding="utf-8")
+    )
+    _install_process(monkeypatch, process)
+
+    with pytest.raises(ImproVisorClientError, match="MusicXML inválido"):
+        await ImproVisorClient(_config(tmp_path)).generate_guidetones(
+            _input(tmp_path), output
+        )
+
+
+@pytest.mark.asyncio
 async def test_exit_code_diferente_de_zero(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -26,7 +26,10 @@ from artifact_store import ArtifactStore
 from config import Settings
 from job import Job, JobStatus
 from job_registry import JobRegistry
+from job_service import JobService
+from leadsheet_builder import LeadsheetBuilder
 from queue_manager import QueueManager
+from router import Router
 from sqlite_job_store import SQLiteJobStore
 from telegram.ext import CommandHandler
 
@@ -383,6 +386,76 @@ def test_text_message_enfileira_job_sem_ia_nem_historico() -> None:
     asyncio.run(scenario())
 
 
+def test_text_message_guide_tones_delega_sem_chamar_ia(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        queue = QueueManager()
+        registry = JobRegistry()
+        artifact_store = ArtifactStore(tmp_path / "artifacts")
+        service = JobService(
+            Router(), queue, registry, LeadsheetBuilder(), artifact_store
+        )
+        original_submit_guide_tones = service.submit_guide_tones
+        guide_tone_calls: list[tuple[int, list[str]]] = []
+
+        async def record_submit_guide_tones(
+            chat_id: int, chords: list[str]
+        ) -> Job:
+            guide_tone_calls.append((chat_id, chords))
+            return await original_submit_guide_tones(chat_id, chords)
+
+        service.submit_guide_tones = record_submit_guide_tones  # type: ignore[method-assign]
+        ai_client = _FakeAIClient()
+        history = ConversationHistory(20)
+        message = _FakeMessage(
+            "Crie guide tones para Dm7 | G7 | Cmaj7 | Cmaj7", 456
+        )
+        services = _services_for_text(service, ai_client, history)  # type: ignore[arg-type]
+
+        await text_message(_message_update(42, message), _context(services))
+
+        assert guide_tone_calls == [(456, ["Dm7", "G7", "Cmaj7", "Cmaj7"])]
+        assert ai_client.calls == []
+        assert history.get_messages() == []
+        job = registry.list_all()[0]
+        assert message.replies == [
+            "Trabalho recebido.\n"
+            "Fila: mkimusica\n"
+            "Skill: guide_tones\n"
+            "Status: AGUARDANDO\n"
+            f"Job: {job.id}"
+        ]
+        assert await queue.get("mkimusica") is job
+
+    asyncio.run(scenario())
+
+
+def test_text_message_guide_tones_nao_autorizada_nao_cria_job(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        queue = QueueManager()
+        registry = JobRegistry()
+        service = JobService(
+            Router(),
+            queue,
+            registry,
+            LeadsheetBuilder(),
+            ArtifactStore(tmp_path / "artifacts"),
+        )
+        ai_client = _FakeAIClient()
+        message = _FakeMessage("guide tones para Dm7 | G7", 456)
+        services = _services_for_text(service, ai_client, ConversationHistory(20))  # type: ignore[arg-type]
+
+        await text_message(_message_update(999, message), _context(services))
+
+        assert registry.list_all() == []
+        assert queue.size("mkimusica") == 0
+        assert ai_client.calls == []
+        assert message.replies == []
+
+    asyncio.run(scenario())
+
+
 def test_text_message_normal_preserva_fluxo_da_ia() -> None:
     async def scenario() -> None:
         job_service = _FakeJobService(None)
@@ -540,6 +613,8 @@ def test_create_application_compartilha_dependencias_do_agent_runner(
     assert services.agent_runner.skill_loader is services.skill_loader
     assert services.job_service.queue_manager is services.queue_manager
     assert services.job_service.job_registry is services.job_registry
+    assert isinstance(services.job_service.leadsheet_builder, LeadsheetBuilder)
+    assert services.job_service.artifact_store is services.artifact_store
     assert services.worker_manager.queue_manager is services.queue_manager
     assert services.worker_manager.job_registry is services.job_registry
     assert services.worker_manager.agent_runner is services.agent_runner

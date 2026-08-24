@@ -82,6 +82,20 @@ class ImproVisorClient:
     async def convert(
         self, input_path: str | Path, output_path: str | Path
     ) -> ImproVisorConversionResult:
+        return await self._run_bridge(input_path, output_path)
+
+    async def generate_guidetones(
+        self, input_path: str | Path, output_path: str | Path
+    ) -> ImproVisorConversionResult:
+        """Gera uma linha de guide tones e a exporta como MusicXML."""
+        return await self._run_bridge(input_path, output_path, "guidetones")
+
+    async def _run_bridge(
+        self,
+        input_path: str | Path,
+        output_path: str | Path,
+        *operation_args: str,
+    ) -> ImproVisorConversionResult:
         input_file = Path(input_path)
         output_file = Path(output_path)
         self._validate_paths(input_file, output_file)
@@ -102,6 +116,7 @@ class ImproVisorClient:
             "-cp",
             self._config.classpath,
             "ImproVisorBridge",
+            *operation_args,
             str(input_file),
             str(output_file),
         )

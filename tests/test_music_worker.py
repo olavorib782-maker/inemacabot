@@ -16,18 +16,30 @@ from workers.music_worker import MusicWorker
 class _FakeImproVisorClient:
     def __init__(self, fail: bool = False) -> None:
         self.fail = fail
-        self.calls: list[tuple[Path, Path]] = []
+        self.convert_calls: list[tuple[Path, Path]] = []
+        self.guidetone_calls: list[tuple[Path, Path]] = []
 
     async def convert(self, input_path: Path, output_path: Path) -> object:
-        self.calls.append((input_path, output_path))
+        self.convert_calls.append((input_path, output_path))
+        return await self._complete(output_path)
+
+    async def generate_guidetones(
+        self, input_path: Path, output_path: Path
+    ) -> object:
+        self.guidetone_calls.append((input_path, output_path))
+        return await self._complete(output_path)
+
+    async def _complete(self, output_path: Path) -> object:
         if self.fail:
             raise ImproVisorClientError("detalhe técnico")
         output_path.write_text("<score-partwise/>", encoding="utf-8")
         return object()
 
 
-def _job_with_input(store: ArtifactStore) -> Job:
-    job = Job(42, "mkimusica", "musica", "leadsheet_para_musicxml", "T", "D")
+def _job_with_input(
+    store: ArtifactStore, skill: str = "leadsheet_para_musicxml"
+) -> Job:
+    job = Job(42, "mkimusica", "musica", skill, "T", "D")
     relative, path = store.job_path(job.id, "input.ls")
     path.write_text("(title Teste)", encoding="utf-8")
     job.artifacts.append(
@@ -46,13 +58,80 @@ async def test_music_worker_chama_cliente_e_adiciona_output(tmp_path: Path) -> N
     result = await worker.process_job(job)
 
     assert result == "Leadsheet convertido para MusicXML."
-    assert client.calls == [
+    assert client.convert_calls == [
         (store.resolve(job.artifacts[0].relative_path), store.resolve(f"{job.id}/output.xml"))
     ]
+    assert client.guidetone_calls == []
     output = job.artifacts[-1]
     assert output.role == "output"
     assert output.filename == "resultado.musicxml"
     assert output.media_type == "application/vnd.recordare.musicxml+xml"
+
+
+@pytest.mark.asyncio
+async def test_guide_tones_chama_cliente_e_adiciona_output(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path)
+    client = _FakeImproVisorClient()
+    worker = MusicWorker(QueueManager(), client, store)  # type: ignore[arg-type]
+    job = _job_with_input(store, "guide_tones")
+
+    result = await worker.process_job(job)
+
+    expected_input = store.resolve(job.artifacts[0].relative_path)
+    expected_output = store.resolve(f"{job.id}/output.xml")
+    assert result == "Guide tones gerados com sucesso."
+    assert client.convert_calls == []
+    assert client.guidetone_calls == [(expected_input, expected_output)]
+    assert expected_input.is_relative_to(store.root)
+    assert expected_output.is_relative_to(store.root)
+    output = job.artifacts[-1]
+    assert output.role == "output"
+    assert output.relative_path == f"{job.id}/output.xml"
+    assert output.filename == "guide_tones.musicxml"
+    assert output.media_type == "application/vnd.recordare.musicxml+xml"
+
+
+@pytest.mark.asyncio
+async def test_skill_musical_desconhecida_falha_sem_output(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path)
+    client = _FakeImproVisorClient()
+    worker = MusicWorker(QueueManager(), client, store)  # type: ignore[arg-type]
+    job = _job_with_input(store, "skill_desconhecida")
+
+    with pytest.raises(ValueError, match="Skill musical não suportada"):
+        await worker.process_job(job)
+
+    assert client.convert_calls == []
+    assert client.guidetone_calls == []
+    assert [artifact.role for artifact in job.artifacts] == ["input"]
+
+
+@pytest.mark.asyncio
+async def test_guide_tones_exige_artefato_ls_de_entrada(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path)
+    client = _FakeImproVisorClient()
+    worker = MusicWorker(QueueManager(), client, store)  # type: ignore[arg-type]
+    job = Job(42, "mkimusica", "musica", "guide_tones", "T", "D")
+
+    with pytest.raises(ValueError, match="artefato .ls de entrada"):
+        await worker.process_job(job)
+
+    assert client.guidetone_calls == []
+    assert job.artifacts == []
+
+
+@pytest.mark.asyncio
+async def test_falha_do_guide_tones_nao_adiciona_output(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path)
+    client = _FakeImproVisorClient(fail=True)
+    worker = MusicWorker(QueueManager(), client, store)  # type: ignore[arg-type]
+    job = _job_with_input(store, "guide_tones")
+
+    with pytest.raises(ImproVisorClientError):
+        await worker.process_job(job)
+
+    assert len(client.guidetone_calls) == 1
+    assert [artifact.role for artifact in job.artifacts] == ["input"]
 
 
 @pytest.mark.asyncio
@@ -98,4 +177,3 @@ async def _wait_for_status(job: Job, expected: JobStatus) -> None:
             await asyncio.sleep(0)
 
     await asyncio.wait_for(wait(), timeout=1)
-

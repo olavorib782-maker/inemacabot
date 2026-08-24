@@ -84,7 +84,7 @@ class ResultNotifier:
 
     @staticmethod
     def _build_document_caption(job: Job) -> str:
-        return "Leadsheet convertido para MusicXML."
+        return job.resultado
 
     @staticmethod
     def _build_missing_artifact_message(job: Job) -> str:

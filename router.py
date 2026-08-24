@@ -27,6 +27,7 @@ class Router:
     """Identifica trabalhos conhecidos sem usar serviços externos."""
 
     _MUSIC_SKILLS = {
+        "guide tones para": "guide_tones",
         "ls para musicxml": "leadsheet_para_musicxml",
         "converter leadsheet": "leadsheet_para_musicxml",
         "converter para musicxml": "leadsheet_para_musicxml",

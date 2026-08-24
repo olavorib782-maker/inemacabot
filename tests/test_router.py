@@ -46,6 +46,23 @@ def test_intencao_musical_especifica_vai_para_mkimusica(message: str) -> None:
     assert decision.skill == "leadsheet_para_musicxml"
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "guide tones para Dm7 | G7",
+        "Crie guide tones para Dm7 | G7 | Cmaj7 | Cmaj7",
+        "Gere guide tones para D/F# | G7/B",
+    ],
+)
+def test_intencao_guide_tones_explicita_vai_para_mkimusica(message: str) -> None:
+    decision = Router().route(message)
+
+    assert decision.is_job is True
+    assert decision.fila == "mkimusica"
+    assert decision.tipo == "musica"
+    assert decision.skill == "guide_tones"
+
+
 @pytest.mark.parametrize("message", ["quero ouvir música", "mostre uma partitura"])
 def test_termos_musicais_genericos_nao_sao_roteados(message: str) -> None:
     assert Router().route(message).is_job is False

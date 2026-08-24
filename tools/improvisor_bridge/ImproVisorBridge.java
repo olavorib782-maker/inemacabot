@@ -1,9 +1,12 @@
 import imp.ImproVisor;
 import imp.com.ExportToMusicXMLCommand;
 import imp.data.Leadsheet;
+import imp.data.ChordPart;
+import imp.data.MelodyPart;
 import imp.data.Score;
 import imp.data.Transposition;
 import imp.data.advice.Advisor;
+import imp.guidetone.GuideLineGenerator;
 import imp.util.Preferences;
 import java.io.File;
 import java.io.FileInputStream;
@@ -15,21 +18,29 @@ import polya.Tokenizer;
 public final class ImproVisorBridge {
     private static final int EXIT_FAILURE = 1;
     private static final int EXIT_USAGE = 2;
+    private static final String GUIDE_TONES_OPERATION = "guidetones";
 
     private ImproVisorBridge() {
     }
 
     public static void main(String[] args) {
-        if (args.length != 2) {
-            fail(EXIT_USAGE, "Uso: ImproVisorBridge <input.ls> <output.xml>");
+        boolean generateGuideTones = args.length == 3
+                && GUIDE_TONES_OPERATION.equals(args[0]);
+        boolean convertLeadsheet = args.length == 2;
+
+        if (!generateGuideTones && !convertLeadsheet) {
+            fail(EXIT_USAGE,
+                    "Uso: ImproVisorBridge <input.ls> <output.xml>"
+                    + " | ImproVisorBridge guidetones <input.ls> <output.xml>");
         }
 
         if (!Boolean.parseBoolean(System.getProperty("java.awt.headless"))) {
             fail(EXIT_USAGE, "Execute com -Djava.awt.headless=true.");
         }
 
-        File input = new File(args[0]);
-        File output = new File(args[1]);
+        int pathArgumentOffset = generateGuideTones ? 1 : 0;
+        File input = new File(args[pathArgumentOffset]);
+        File output = new File(args[pathArgumentOffset + 1]);
 
         if (!input.isFile() || !input.canRead()) {
             fail(EXIT_FAILURE, "Arquivo .ls inexistente ou ilegivel.");
@@ -50,7 +61,9 @@ public final class ImproVisorBridge {
                 fail(EXIT_FAILURE, "Falha ao interpretar o arquivo .ls.");
             }
 
-            if (score.getPartList().size() == 0) {
+            if (generateGuideTones) {
+                replaceMelodyWithGuideTones(score);
+            } else if (score.getPartList().size() == 0) {
                 fail(EXIT_FAILURE, "O arquivo .ls nao possui parte melodica.");
             }
 
@@ -71,6 +84,42 @@ public final class ImproVisorBridge {
         } catch (Throwable throwable) {
             fail(EXIT_FAILURE, "Conversao nao concluida: " + safeMessage(throwable));
         }
+    }
+
+    private static void replaceMelodyWithGuideTones(Score score) {
+        ChordPart chords = score.getChordProg();
+        if (chords == null || chords.getChords().isEmpty() || chords.size() == 0) {
+            fail(EXIT_FAILURE, "O arquivo .ls nao possui progressao harmonica.");
+        }
+
+        GuideLineGenerator generator = new GuideLineGenerator(
+                chords,
+                GuideLineGenerator.NOPREFERENCE,
+                "3",
+                "",
+                true,
+                55,
+                79,
+                0,
+                false,
+                false,
+                true,
+                "");
+        MelodyPart guideTones = generator.makeGuideLine();
+
+        if (guideTones == null || guideTones.size() == 0) {
+            fail(EXIT_FAILURE, "O Impro-Visor nao gerou guide tones.");
+        }
+        if (guideTones.size() != chords.size()) {
+            fail(EXIT_FAILURE, "A duracao dos guide tones nao corresponde a harmonia.");
+        }
+
+        int melodyPartCount = score.getPartList().size();
+        score.clearParts();
+        for (int index = 0; index < melodyPartCount; index++) {
+            score.delPart(0);
+        }
+        score.addPart(guideTones);
     }
 
     private static void loadVocabulary() throws Exception {

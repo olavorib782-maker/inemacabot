@@ -84,6 +84,7 @@ async def test_notifier_envia_documento_para_output(tmp_path: Path) -> None:
 
     store = ArtifactStore(tmp_path)
     job = Job(123, "mkimusica", "musica", "leadsheet_para_musicxml", "T", "D")
+    job.resultado = "Leadsheet convertido para MusicXML."
     relative, path = store.job_path(job.id, "output.xml")
     path.write_text("<score-partwise/>", encoding="utf-8")
     job.artifacts.append(
@@ -95,6 +96,36 @@ async def test_notifier_envia_documento_para_output(tmp_path: Path) -> None:
     assert texts == []
     assert documents == [
         (123, path, "resultado.musicxml", "Leadsheet convertido para MusicXML.")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_notifier_usa_resultado_de_guide_tones_como_caption(
+    tmp_path: Path,
+) -> None:
+    documents = []
+
+    async def sender(chat_id: int, message: str) -> None:
+        raise AssertionError("O fluxo com output não deve enviar texto.")
+
+    async def document_sender(
+        chat_id: int, path: Path, filename: str, caption: str
+    ) -> None:
+        documents.append((chat_id, path, filename, caption))
+
+    store = ArtifactStore(tmp_path)
+    job = Job(123, "mkimusica", "musica", "guide_tones", "T", "D")
+    job.resultado = "Guide tones gerados com sucesso."
+    relative, path = store.job_path(job.id, "output.xml")
+    path.write_text("<score-partwise/>", encoding="utf-8")
+    job.artifacts.append(
+        JobArtifact("output", relative, "guide_tones.musicxml", "music/xml")
+    )
+
+    await ResultNotifier(sender, document_sender, store).notify(job)
+
+    assert documents == [
+        (123, path, "guide_tones.musicxml", "Guide tones gerados com sucesso.")
     ]
 
 

@@ -33,6 +33,7 @@ from improvisor_client import (
 )
 from job_registry import JobRegistry
 from job_service import JobService
+from leadsheet_builder import LeadsheetBuilder
 from queue_manager import QueueManager
 from router import Router
 from skill_loader import SkillLoader
@@ -380,6 +381,7 @@ def create_application(settings: Settings) -> Application:
     agent_runner = AgentRunner(ai_client, skill_loader)
     event_bus = JobEventBus()
     artifact_store = ArtifactStore(settings.artifact_root)
+    leadsheet_builder = LeadsheetBuilder()
     improvisor_client = ImproVisorClient(
         ImproVisorClientConfig(
             java_executable=settings.improvisor_java_executable,
@@ -422,7 +424,13 @@ def create_application(settings: Settings) -> Application:
         history=ConversationHistory(settings.history_max_messages),
         queue_manager=queue_manager,
         job_registry=job_registry,
-        job_service=JobService(Router(), queue_manager, job_registry),
+        job_service=JobService(
+            Router(),
+            queue_manager,
+            job_registry,
+            leadsheet_builder,
+            artifact_store,
+        ),
         worker_manager=WorkerManager(
             queue_manager,
             agent_runner,
