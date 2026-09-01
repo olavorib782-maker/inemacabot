@@ -26,3 +26,5 @@ pytest_temp/
 /tools/improvisor_bridge/build/
 /tools/improvisor_bridge/output.xml
 *.class
+
+/improvisor-home/

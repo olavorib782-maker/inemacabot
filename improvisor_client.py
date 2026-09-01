@@ -96,8 +96,8 @@ class ImproVisorClient:
         output_path: str | Path,
         *operation_args: str,
     ) -> ImproVisorConversionResult:
-        input_file = Path(input_path)
-        output_file = Path(output_path)
+        input_file = Path(input_path).resolve()
+        output_file = Path(output_path).resolve()
         self._validate_paths(input_file, output_file)
 
         # Impede que um XML antigo seja confundido com a saída desta execução.
