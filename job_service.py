@@ -51,6 +51,62 @@ def extract_guide_tones_chords(message: str) -> list[str]:
     return [bar.strip() for bar in bars]
 
 
+def parse_video_caption(text: str) -> tuple[str, str]:
+    """Separa a legenda do Telegram em fala e direção visual."""
+
+    text = text.strip()
+
+    if not text:
+        return "", ""
+
+    linhas = [
+        linha.strip()
+        for linha in text.splitlines()
+        if linha.strip()
+    ]
+
+    tem_campos = any(
+        linha.casefold().startswith(
+            ("fala:", "direcao:", "direção:")
+        )
+        for linha in linhas
+    )
+
+    # Compatibilidade com o comportamento antigo:
+    # texto comum continua sendo tratado como fala.
+    if not tem_campos:
+        return text, ""
+
+    fala: list[str] = []
+    direcao: list[str] = []
+    campo_atual: str | None = None
+
+    for linha in linhas:
+        normalizada = linha.casefold()
+
+        if normalizada.startswith("fala:"):
+            campo_atual = "fala"
+            conteudo = linha.split(":", 1)[1].strip()
+            if conteudo:
+                fala.append(conteudo)
+            continue
+
+        if normalizada.startswith(("direcao:", "direção:")):
+            campo_atual = "direcao"
+            conteudo = linha.split(":", 1)[1].strip()
+            if conteudo:
+                direcao.append(conteudo)
+            continue
+
+        # Permite continuar o campo na linha seguinte.
+        if campo_atual == "fala":
+            fala.append(linha)
+        elif campo_atual == "direcao":
+            direcao.append(linha)
+
+    return " ".join(fala).strip(), " ".join(direcao).strip()
+
+
 class JobService:
     """Cria e enfileira trabalhos a partir das decisões do roteador."""
 
@@ -84,6 +140,48 @@ class JobService:
             skill=decision.skill,
             titulo=message,
             descricao=message,
+        )
+        self.job_registry.add(job)
+        await self.queue_manager.put(job)
+        return job
+
+    async def submit_video_photo(
+        self,
+        chat_id: int,
+        job_id: str,
+        relative_path: str,
+        prompt: str,
+    ) -> Job:
+        """Persiste e enfileira um Job de vídeo a partir de uma foto enviada."""
+
+        fala, direcao = parse_video_caption(prompt)
+
+        dados: dict[str, str] = {}
+
+        if fala:
+            dados["fala"] = fala
+            dados["voz"] = "pt-BR-AntonioNeural"
+
+        if direcao:
+            dados["direcao"] = direcao
+
+        job = Job(
+            id=job_id,
+            chat_id=chat_id,
+            fila="mkivideos",
+            tipo="video",
+            skill="foto_para_video",
+            titulo="Gerar vídeo a partir de foto",
+            descricao=prompt or "Foto recebida pelo Telegram",
+            dados=dados,
+            artifacts=[
+                JobArtifact(
+                    role="input",
+                    relative_path=relative_path,
+                    filename="input.jpg",
+                    media_type="image/jpeg",
+                )
+            ],
         )
         self.job_registry.add(job)
         await self.queue_manager.put(job)

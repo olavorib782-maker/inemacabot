@@ -49,6 +49,7 @@ class WorkerManager:
             "mkivideos": VideoWorker(
                 self.queue_manager,
                 agent_runner=self.agent_runner,
+                artifact_store=self.artifact_store,
                 event_bus=self.event_bus,
                 job_registry=self.job_registry,
             ),

@@ -259,6 +259,51 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         for part in split_message(answer):
             await message.reply_text(part)
 
+async def photo_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Recebe uma foto autorizada e cria um Job de vídeo."""
+    services = _services(context)
+    if not _is_authorized(update, services):
+        return
+
+    message = update.effective_message
+    if message is None or not message.photo:
+        return
+
+    photo = message.photo[-1]
+    prompt = (message.caption or "").strip()
+
+    job_id = str(uuid4())
+    relative_path, input_path = services.artifact_store.job_path(job_id, "input.jpg")
+    partial_path = input_path.with_name("input.jpg.part")
+
+    try:
+        telegram_file = await context.bot.get_file(photo.file_id)
+        await telegram_file.download_to_drive(custom_path=partial_path)
+        partial_path.replace(input_path)
+
+        job = await services.job_service.submit_video_photo(
+            chat_id=message.chat_id,
+            job_id=job_id,
+            relative_path=relative_path,
+            prompt=prompt,
+        )
+    except Exception as error:
+        partial_path.unlink(missing_ok=True)
+        input_path.unlink(missing_ok=True)
+        logger.error(
+            "Falha ao receber foto do Telegram (%s).",
+            type(error).__name__,
+        )
+        await message.reply_text("Não foi possível receber a foto no momento.")
+        return
+
+    await message.reply_text(
+        "Foto recebida.\n"
+        f"Fila: {job.fila}\n"
+        f"Skill: {job.skill}\n"
+        f"Status: {job.status.value}\n"
+        f"Job: {job.id}"
+    )
 
 async def document_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Recebe um leadsheet autorizado e cria um Job musical."""
@@ -459,6 +504,7 @@ def create_application(settings: Settings) -> Application:
     application.add_handler(CommandHandler("limpar", clear_command))
     application.add_handler(CommandHandler("status", status_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message))
+    application.add_handler(MessageHandler(filters.PHOTO, photo_message))
     application.add_handler(MessageHandler(filters.Document.ALL, document_message))
     application.add_error_handler(error_handler)
     return application

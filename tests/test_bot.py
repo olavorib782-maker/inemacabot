@@ -14,6 +14,7 @@ from bot import (
     _send_result_document,
     create_application,
     document_message,
+    photo_message,
     help_command,
     split_message,
     start_workers,
@@ -70,6 +71,70 @@ def test_help_command_menciona_status() -> None:
         )
         assert len(message.replies) == 1
         assert "/status" in message.replies[0]
+
+    asyncio.run(scenario())
+
+
+
+def test_photo_message_com_legenda_cria_foto_para_video_com_fala(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        services = _document_services(tmp_path)
+        message = _FakePhotoMessage(
+            caption="Olá! Você está no Inêma Cabót.",
+            chat_id=42,
+        )
+        bot = _FakeTelegramBot("imagem-falsa")
+
+        await photo_message(
+            _message_update(42, message),
+            _document_context(services, bot),
+        )
+
+        assert bot.get_file_calls == ["photo-file-id"]
+
+        queue = services.job_service.queue_manager
+        assert queue.size("mkivideos") == 1
+
+        job = await queue.get("mkivideos")
+
+        assert job.skill == "foto_para_video"
+        assert job.dados["fala"] == "Olá! Você está no Inêma Cabót."
+        assert job.dados["voz"] == "pt-BR-AntonioNeural"
+
+        saved_path = services.artifact_store.resolve(
+            job.artifacts[0].relative_path
+        )
+        assert saved_path.is_file()
+
+    asyncio.run(scenario())
+
+
+def test_photo_message_sem_legenda_cria_video_sem_fala(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        services = _document_services(tmp_path)
+        message = _FakePhotoMessage(
+            caption="",
+            chat_id=42,
+        )
+        bot = _FakeTelegramBot("imagem-falsa")
+
+        await photo_message(
+            _message_update(42, message),
+            _document_context(services, bot),
+        )
+
+        queue = services.job_service.queue_manager
+        assert queue.size("mkivideos") == 1
+
+        job = await queue.get("mkivideos")
+
+        assert job.skill == "foto_para_video"
+        assert "fala" not in job.dados
+        assert "voz" not in job.dados
 
     asyncio.run(scenario())
 
@@ -739,6 +804,15 @@ class _FakeMessage:
 
     async def reply_text(self, text: str) -> None:
         self.replies.append(text)
+
+
+class _FakePhotoMessage(_FakeMessage):
+    def __init__(self, caption: str, chat_id: int) -> None:
+        super().__init__("", chat_id)
+        self.caption = caption
+        self.photo = [
+            SimpleNamespace(file_id="photo-file-id")
+        ]
 
 
 class _FakeDocumentMessage(_FakeMessage):

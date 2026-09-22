@@ -96,6 +96,48 @@ def test_documento_musical_e_persistido_antes_de_mkimusica(tmp_path: Path) -> No
     asyncio.run(scenario())
 
 
+def test_submit_video_photo_cria_foto_para_video_com_fala() -> None:
+    async def scenario() -> None:
+        service, manager = _make_service()
+
+        job = await service.submit_video_photo(
+            chat_id=42,
+            job_id="job-foto-1",
+            relative_path="job-foto-1/input.jpg",
+            prompt="Olá! Você está no Inêma Cabót.",
+        )
+
+        assert job.fila == "mkivideos"
+        assert job.tipo == "video"
+        assert job.skill == "foto_para_video"
+        assert job.dados["fala"] == "Olá! Você está no Inêma Cabót."
+        assert job.dados["voz"] == "pt-BR-AntonioNeural"
+        assert job.artifacts[0].relative_path == "job-foto-1/input.jpg"
+        assert job.artifacts[0].filename == "input.jpg"
+        assert await manager.get("mkivideos") is job
+
+    asyncio.run(scenario())
+
+
+def test_submit_video_photo_sem_fala_nao_cria_dados_de_voz() -> None:
+    async def scenario() -> None:
+        service, manager = _make_service()
+
+        job = await service.submit_video_photo(
+            chat_id=42,
+            job_id="job-foto-2",
+            relative_path="job-foto-2/input.jpg",
+            prompt="",
+        )
+
+        assert job.skill == "foto_para_video"
+        assert "fala" not in job.dados
+        assert "voz" not in job.dados
+        assert await manager.get("mkivideos") is job
+
+    asyncio.run(scenario())
+
+
 def test_submit_guide_tones_cria_artifact_persiste_e_enfileira(
     tmp_path: Path,
 ) -> None:

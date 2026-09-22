@@ -1,0 +1,25 @@
+Referência aprovada de mixagem - foto_para_video
+
+Arquivo:
+foto-para-video-audio-referencia-v1.mp4
+
+Duração aproximada:
+5 segundos
+
+Características aprovadas:
+- voz clara em primeiro plano
+- música em volume baixo sob a fala
+- música com boa presença após a fala
+- fade-out final perceptível
+- sem sensação de corte abrupto
+
+Parâmetros usados no teste:
+- volume inicial da música: 0.10
+- volume durante fala: 0.16
+- volume posterior: 0.28 / 0.22
+- fade-in: 0.4 s
+- fade-out: início em 4.0 s
+- fade-out duração: 1.0 s
+
+Status:
+APROVADO COMO REFERÊNCIA
