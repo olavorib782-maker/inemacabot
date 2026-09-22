@@ -28,3 +28,9 @@ pytest_temp/
 *.class
 
 /improvisor-home/
+
+# Backups locais de desenvolvimento
+*.bak-*
+
+# Logs locais
+*.log
