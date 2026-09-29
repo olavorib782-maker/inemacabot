@@ -486,3 +486,26 @@ def test_tipos_de_trabalho_chegam_as_filas_corretas() -> None:
 def _make_service() -> tuple[JobService, QueueManager]:
     manager = QueueManager()
     return JobService(Router(), manager, JobRegistry()), manager
+
+
+def test_submit_video_photo_com_voz_feminina() -> None:
+    async def scenario() -> None:
+        service, manager = _make_service()
+
+        job = await service.submit_video_photo(
+            chat_id=42,
+            job_id="job-foto-voz-feminina",
+            relative_path="job-foto-voz-feminina/input.jpg",
+            prompt=(
+                "fala: Olá! Seja muito bem-vinda.\n"
+                "voz: feminina\n"
+                "direcao: sorriso suave"
+            ),
+        )
+
+        assert job.dados["fala"] == "Olá! Seja muito bem-vinda."
+        assert job.dados["voz"] == "pt-BR-FranciscaNeural"
+        assert job.dados["direcao"] == "sorriso suave"
+        assert await manager.get("mkivideos") is job
+
+    asyncio.run(scenario())

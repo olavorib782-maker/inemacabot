@@ -3,6 +3,7 @@ u"""Worker especializado para a fila de vídeos."""
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import shutil
 
@@ -18,6 +19,9 @@ from queue_manager import QueueManager
 from workers.base_worker import BaseWorker
 from job_event_bus import JobEventBus
 from job_registry import JobRegistry
+
+
+logger = logging.getLogger(__name__)
 
 
 class VideoWorker(BaseWorker):
@@ -110,11 +114,14 @@ class VideoWorker(BaseWorker):
         motor_fala = str(
             job.dados.get(
                 "motor_fala",
-                "infinite_talk",
+                "kling_avatar",
             )
         ).strip().lower()
 
-        if fala and motor_fala == "infinite_talk":
+        if fala and motor_fala in {
+            "kling_avatar",
+            "infinite_talk",
+        }:
             voz = str(
                 job.dados.get(
                     "voz",
@@ -151,30 +158,46 @@ class VideoWorker(BaseWorker):
                 )
             )
 
-            infinitalk_relative, infinitalk_path = (
+            if motor_fala == "kling_avatar":
+                avatar_filename = "video-kling-avatar.mp4"
+                resultado_audio = "com fala, Kling AI Avatar e música"
+            else:
+                avatar_filename = "video-infinitalk.mp4"
+                resultado_audio = "com fala, InfiniteTalk e música"
+
+            avatar_relative, avatar_path = (
                 self.artifact_store.job_path(
                     job.id,
-                    "video-infinitalk.mp4",
+                    avatar_filename,
                 )
             )
 
-            await self._generate_kie_infinitalk(
-                caminhos_imagens[0],
-                voz_path,
-                infinitalk_path,
-            )
+            if motor_fala == "kling_avatar":
+                await self._generate_kie_kling_avatar(
+                    caminhos_imagens[0],
+                    voz_path,
+                    avatar_path,
+                    direcao=direcao,
+                )
+            else:
+                await self._generate_kie_infinitalk(
+                    caminhos_imagens[0],
+                    voz_path,
+                    avatar_path,
+                    direcao=direcao,
+                )
 
             job.artifacts.append(
                 JobArtifact(
                     role="intermediate",
-                    relative_path=infinitalk_relative,
-                    filename="video-infinitalk.mp4",
+                    relative_path=avatar_relative,
+                    filename=avatar_filename,
                     media_type=self._OUTPUT_MEDIA_TYPE,
                 )
             )
 
             await self._mix_voice_and_music(
-                infinitalk_path,
+                avatar_path,
                 self._FAIXA_PADRAO,
                 final_path,
             )
@@ -191,7 +214,7 @@ class VideoWorker(BaseWorker):
             return (
                 f"Job {job.id} recebeu "
                 f"{len(caminhos_imagens)} imagem(ns) e gerou "
-                f"video-final.mp4 com fala, InfiniteTalk e música."
+                f"video-final.mp4 {resultado_audio}."
             )
 
         prompt_agnes = (
@@ -1195,12 +1218,87 @@ class VideoWorker(BaseWorker):
 
         return str(download_url)
 
+    async def _create_kie_kling_avatar_task(
+        self,
+        image_url: str,
+        audio_url: str,
+        prompt: str | None = None,
+        direcao: str = "",
+    ) -> str:
+        """Cria uma tarefa Kling AI Avatar Standard na KIE."""
+
+        kie_key = self._get_kie_api_key()
+
+        url = "https://api.kie.ai/api/v1/jobs/createTask"
+
+        if prompt is None:
+            prompt = (
+                "A friendly, calm and happy person welcoming someone to a new place. "
+                "Maintain a relaxed posture, steady head and shoulders, and gentle natural movement. "
+                "Use a soft pleasant expression throughout the speech, with a subtle smile visible from the beginning. "
+                "Keep warm, reassuring eye contact and natural blinking. "
+                "Facial expressions should feel positive, welcoming and relaxed, never exaggerated. "
+                "Lip synchronization must remain accurate, with moderate and natural mouth movement. "
+                "Avoid sudden head movement, strong eyebrow emphasis, leaning forward, rocking, or large gestures. "
+                "Near the end, let the smile become slightly warmer and hold it naturally. "
+                "The overall performance should feel welcoming, peaceful, confident and genuinely happy."
+            )
+
+        if direcao:
+            prompt += (
+                " Additional creative direction from the user: "
+                + direcao
+            )
+
+        payload = {
+            "model": "kling/ai-avatar-standard",
+            "input": {
+                "image_url": image_url,
+                "audio_url": audio_url,
+                "prompt": prompt,
+            },
+        }
+
+        headers = {
+            "Authorization": f"Bearer {kie_key}",
+            "Content-Type": "application/json",
+        }
+
+        async with httpx.AsyncClient(
+            timeout=120.0
+        ) as client:
+            resposta = await client.post(
+                url,
+                headers=headers,
+                json=payload,
+            )
+
+        resposta.raise_for_status()
+
+        data = resposta.json()
+
+        task_id = (
+            data.get("data", {})
+            .get("taskId")
+        )
+
+        if not task_id:
+            raise RuntimeError(
+                f"KIE Kling Avatar não retornou taskId: {data}"
+            )
+
+        logger.info("KIE Kling Avatar criado: taskId=%s", task_id)
+
+        return str(task_id)
+
+
     async def _create_kie_infinitalk_task(
         self,
         image_url: str,
         audio_url: str,
         prompt: str | None = None,
         resolution: str = "480p",
+        direcao: str = "",
     ) -> str:
         """Cria uma tarefa InfiniteTalk na KIE e retorna o taskId."""
 
@@ -1219,6 +1317,12 @@ class VideoWorker(BaseWorker):
                 "Avoid sudden head movement, strong eyebrow emphasis, leaning forward, rocking, or large gestures. "
                 "Near the end, let the smile become slightly warmer and hold it naturally. "
                 "The overall performance should feel welcoming, peaceful, confident and genuinely happy."
+            )
+
+        if direcao:
+            prompt += (
+                " Additional creative direction from the user: "
+                + direcao
             )
 
         payload = {
@@ -1375,8 +1479,10 @@ class VideoWorker(BaseWorker):
 
                 if state == "fail":
                     raise RuntimeError(
-                        "KIE falhou: "
-                        f"{data.get('failMsg') or payload}"
+                        "KIE falhou. "
+                        f"taskId={task_id} "
+                        f"failMsg={data.get('failMsg')} "
+                        f"payload={payload}"
                     )
 
                 agora = asyncio.get_running_loop().time()
@@ -1485,6 +1591,39 @@ class VideoWorker(BaseWorker):
 
         return output_path
 
+    async def _generate_kie_kling_avatar(
+        self,
+        image_path: Path,
+        audio_path: Path,
+        output_path: Path,
+        prompt: str | None = None,
+        direcao: str = "",
+    ) -> Path:
+        """Executa o ciclo completo do Kling AI Avatar Standard pela KIE."""
+
+        image_url, audio_url = await asyncio.gather(
+            self._upload_kie_file(image_path),
+            self._upload_kie_file(audio_path),
+        )
+
+        task_id = await self._create_kie_kling_avatar_task(
+            image_url,
+            audio_url,
+            prompt=prompt,
+            direcao=direcao,
+        )
+
+        result_url = await self._wait_kie_task_result(
+            task_id,
+            timeout_s=1800.0,
+        )
+
+        return await self._download_kie_result(
+            result_url,
+            output_path,
+        )
+
+
     async def _generate_kie_infinitalk(
         self,
         image_path: Path,
@@ -1492,6 +1631,7 @@ class VideoWorker(BaseWorker):
         output_path: Path,
         prompt: str | None = None,
         resolution: str = "480p",
+        direcao: str = "",
     ) -> Path:
         """Executa o ciclo completo do InfiniteTalk pela KIE."""
 
@@ -1505,6 +1645,7 @@ class VideoWorker(BaseWorker):
             audio_url,
             prompt=prompt,
             resolution=resolution,
+            direcao=direcao,
         )
 
         result_url = await self._wait_kie_task_result(

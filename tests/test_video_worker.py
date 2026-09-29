@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
+import logging
 from collections.abc import Callable
 from pathlib import Path
 
@@ -14,6 +16,126 @@ from job import Job, JobStatus
 from queue_manager import QueueManager
 from workers.base_worker import BaseWorker
 from workers.video_worker import VideoWorker
+
+
+@pytest.mark.asyncio
+async def test_create_kie_kling_avatar_task_registra_task_id(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self) -> dict:
+            return {"data": {"taskId": "task-kling-123"}}
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        async def __aenter__(self) -> "FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            pass
+
+        async def post(self, *args: object, **kwargs: object) -> FakeResponse:
+            return FakeResponse()
+
+    worker = VideoWorker(QueueManager())
+    monkeypatch.setattr(worker, "_get_kie_api_key", lambda: "chave-secreta")
+    monkeypatch.setattr(
+        "workers.video_worker.httpx.AsyncClient",
+        FakeAsyncClient,
+    )
+
+    with caplog.at_level(logging.INFO, logger="workers.video_worker"):
+        task_id = await worker._create_kie_kling_avatar_task(
+            "https://example.test/imagem",
+            "https://example.test/audio",
+        )
+
+    assert task_id == "task-kling-123"
+    assert "KIE Kling Avatar criado: taskId=task-kling-123" in caplog.messages
+    assert "chave-secreta" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_generate_kie_kling_avatar_aguarda_por_1800_segundos(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = VideoWorker(QueueManager())
+    chamadas: list[tuple[str, dict[str, object]]] = []
+
+    async def fake_upload(file_path: Path) -> str:
+        return f"https://example.test/{file_path.name}"
+
+    async def fake_create(*args: object, **kwargs: object) -> str:
+        return "task-kling"
+
+    async def fake_wait(task_id: str, **kwargs: object) -> str:
+        chamadas.append((task_id, kwargs))
+        return "https://example.test/resultado.mp4"
+
+    async def fake_download(result_url: str, output_path: Path) -> Path:
+        return output_path
+
+    monkeypatch.setattr(worker, "_upload_kie_file", fake_upload)
+    monkeypatch.setattr(worker, "_create_kie_kling_avatar_task", fake_create)
+    monkeypatch.setattr(worker, "_wait_kie_task_result", fake_wait)
+    monkeypatch.setattr(worker, "_download_kie_result", fake_download)
+
+    output_path = tmp_path / "resultado.mp4"
+    result = await worker._generate_kie_kling_avatar(
+        tmp_path / "imagem.jpg",
+        tmp_path / "audio.mp3",
+        output_path,
+    )
+
+    assert result == output_path
+    assert chamadas == [("task-kling", {"timeout_s": 1800.0})]
+
+
+@pytest.mark.asyncio
+async def test_infinitalk_preserva_timeout_padrao_kie(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = VideoWorker(QueueManager())
+    chamadas: list[tuple[str, dict[str, object]]] = []
+
+    async def fake_upload(file_path: Path) -> str:
+        return f"https://example.test/{file_path.name}"
+
+    async def fake_create(*args: object, **kwargs: object) -> str:
+        return "task-infinitalk"
+
+    async def fake_wait(task_id: str, **kwargs: object) -> str:
+        chamadas.append((task_id, kwargs))
+        return "https://example.test/resultado.mp4"
+
+    async def fake_download(result_url: str, output_path: Path) -> Path:
+        return output_path
+
+    monkeypatch.setattr(worker, "_upload_kie_file", fake_upload)
+    monkeypatch.setattr(worker, "_create_kie_infinitalk_task", fake_create)
+    monkeypatch.setattr(worker, "_wait_kie_task_result", fake_wait)
+    monkeypatch.setattr(worker, "_download_kie_result", fake_download)
+
+    await worker._generate_kie_infinitalk(
+        tmp_path / "imagem.jpg",
+        tmp_path / "audio.mp3",
+        tmp_path / "resultado.mp4",
+    )
+
+    timeout_default = inspect.signature(
+        VideoWorker._wait_kie_task_result
+    ).parameters["timeout_s"].default
+
+    assert timeout_default == 900.0
+    assert chamadas == [("task-infinitalk", {})]
 
 
 def test_video_worker_herda_base_worker_e_usa_fila_correta() -> None:
@@ -398,6 +520,7 @@ async def test_foto_para_video_com_fala_lipsync_e_musica(
 
     job.dados["fala"] = "Olá! Este é um teste."
     job.dados["voz"] = "pt-BR-AntonioNeural"
+    job.dados["direcao"] = "pessoa tranquila, sorriso suave"
 
     relative, foto_path = store.job_path(
         job.id,
@@ -416,7 +539,7 @@ async def test_foto_para_video_com_fala_lipsync_e_musica(
 
     chamadas = {
         "tts": 0,
-        "infinitalk": 0,
+        "kling": 0,
         "mix": 0,
         "musica_antiga": 0,
     }
@@ -453,20 +576,20 @@ async def test_foto_para_video_com_fala_lipsync_e_musica(
         output_path.write_bytes(b"voz falsa")
         return output_path
 
-    async def fake_generate_kie_infinitalk(
+    async def fake_generate_kie_kling_avatar(
         image_path: Path,
         audio_path: Path,
         output_path: Path,
         prompt: str | None = None,
-        resolution: str = "480p",
+        direcao: str = "",
     ) -> Path:
-        chamadas["infinitalk"] += 1
+        chamadas["kling"] += 1
 
         assert image_path.name == "foto.jpg"
         assert audio_path.name == "voz.mp3"
-        assert resolution == "480p"
+        assert direcao == "pessoa tranquila, sorriso suave"
 
-        output_path.write_bytes(b"infinitalk falso")
+        output_path.write_bytes(b"kling falso")
         return output_path
 
     async def fake_mix_voice_and_music(
@@ -476,7 +599,7 @@ async def test_foto_para_video_com_fala_lipsync_e_musica(
     ) -> Path:
         chamadas["mix"] += 1
 
-        assert video_path.name == "video-infinitalk.mp4"
+        assert video_path.name == "video-kling-avatar.mp4"
 
         output_path.write_bytes(b"video final")
         return output_path
@@ -506,8 +629,8 @@ async def test_foto_para_video_com_fala_lipsync_e_musica(
     )
     monkeypatch.setattr(
         worker,
-        "_generate_kie_infinitalk",
-        fake_generate_kie_infinitalk,
+        "_generate_kie_kling_avatar",
+        fake_generate_kie_kling_avatar,
     )
     monkeypatch.setattr(
         worker,
@@ -523,7 +646,7 @@ async def test_foto_para_video_com_fala_lipsync_e_musica(
     result = await worker.process_job(job)
 
     assert chamadas["tts"] == 1
-    assert chamadas["infinitalk"] == 1
+    assert chamadas["kling"] == 1
     assert chamadas["mix"] == 1
 
     # Com fala, o fluxo antigo de música não deve ser usado.
@@ -543,7 +666,7 @@ async def test_foto_para_video_com_fala_lipsync_e_musica(
     assert "shot-01.mp4" not in nomes
     assert "video-base.mp4" not in nomes
     assert "voz.mp3" in nomes
-    assert "video-infinitalk.mp4" in nomes
+    assert "video-kling-avatar.mp4" in nomes
 
     outputs = [
         artifact
@@ -554,5 +677,5 @@ async def test_foto_para_video_com_fala_lipsync_e_musica(
     assert len(outputs) == 1
     assert outputs[0].filename == "video-final.mp4"
 
-    assert "com fala, InfiniteTalk e música" in result
+    assert "com fala, Kling AI Avatar e música" in result
 

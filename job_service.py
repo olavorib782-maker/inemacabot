@@ -51,13 +51,13 @@ def extract_guide_tones_chords(message: str) -> list[str]:
     return [bar.strip() for bar in bars]
 
 
-def parse_video_caption(text: str) -> tuple[str, str]:
-    """Separa a legenda do Telegram em fala e direção visual."""
+def parse_video_caption(text: str) -> tuple[str, str, str]:
+    """Separa a legenda do Telegram em fala, direção visual e voz."""
 
     text = text.strip()
 
     if not text:
-        return "", ""
+        return "", "", ""
 
     linhas = [
         linha.strip()
@@ -67,7 +67,7 @@ def parse_video_caption(text: str) -> tuple[str, str]:
 
     tem_campos = any(
         linha.casefold().startswith(
-            ("fala:", "direcao:", "direção:")
+            ("fala:", "direcao:", "direção:", "voz:")
         )
         for linha in linhas
     )
@@ -75,10 +75,11 @@ def parse_video_caption(text: str) -> tuple[str, str]:
     # Compatibilidade com o comportamento antigo:
     # texto comum continua sendo tratado como fala.
     if not tem_campos:
-        return text, ""
+        return text, "", ""
 
     fala: list[str] = []
     direcao: list[str] = []
+    voz: list[str] = []
     campo_atual: str | None = None
 
     for linha in linhas:
@@ -98,13 +99,26 @@ def parse_video_caption(text: str) -> tuple[str, str]:
                 direcao.append(conteudo)
             continue
 
+        if normalizada.startswith("voz:"):
+            campo_atual = "voz"
+            conteudo = linha.split(":", 1)[1].strip()
+            if conteudo:
+                voz.append(conteudo)
+            continue
+
         # Permite continuar o campo na linha seguinte.
         if campo_atual == "fala":
             fala.append(linha)
         elif campo_atual == "direcao":
             direcao.append(linha)
+        elif campo_atual == "voz":
+            voz.append(linha)
 
-    return " ".join(fala).strip(), " ".join(direcao).strip()
+    return (
+        " ".join(fala).strip(),
+        " ".join(direcao).strip(),
+        " ".join(voz).strip(),
+    )
 
 
 class JobService:
@@ -154,13 +168,27 @@ class JobService:
     ) -> Job:
         """Persiste e enfileira um Job de vídeo a partir de uma foto enviada."""
 
-        fala, direcao = parse_video_caption(prompt)
+        fala, direcao, voz = parse_video_caption(prompt)
 
         dados: dict[str, str] = {}
 
         if fala:
             dados["fala"] = fala
-            dados["voz"] = "pt-BR-AntonioNeural"
+
+            vozes = {
+                "feminina": "pt-BR-FranciscaNeural",
+                "feminino": "pt-BR-FranciscaNeural",
+                "francisca": "pt-BR-FranciscaNeural",
+                "masculina": "pt-BR-AntonioNeural",
+                "masculino": "pt-BR-AntonioNeural",
+                "antonio": "pt-BR-AntonioNeural",
+                "antônio": "pt-BR-AntonioNeural",
+            }
+
+            dados["voz"] = vozes.get(
+                voz.casefold(),
+                "pt-BR-AntonioNeural",
+            )
 
         if direcao:
             dados["direcao"] = direcao
