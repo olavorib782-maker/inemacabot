@@ -126,3 +126,122 @@ def _make_job() -> Job:
         descricao="Descrição persistida",
         prioridade=JobPriority.ALTA,
     )
+
+
+def test_persiste_narracao_aprovada(tmp_path):
+    database = tmp_path / "jobs.sqlite3"
+
+    store = SQLiteJobStore(database)
+    store.initialize()
+
+    job = _make_job()
+    job.skill = "texto_avatar"
+
+    job.dados = {"gerar_audio": True}
+
+    store.save(job)
+
+    job.status = JobStatus.CONCLUIDO
+    job.resultado = "Locução aprovada!"
+
+    job.dados.update({
+        "narracao": "Venha apreciar nossa música.",
+        "duracao_real": 12.5,
+        "duracao_alvo": 15,
+        "tentativas_narracao": 2,
+    })
+
+    job.artifacts.append(
+        JobArtifact(
+            role="output",
+            relative_path=f"{job.id}/narracao.mp3",
+            filename="narracao.mp3",
+            media_type="audio/mpeg",
+        )
+    )
+
+    store.save(job)
+
+    novo_store = SQLiteJobStore(database)
+    novo_store.initialize()
+
+    restored = novo_store.load_all()[0]
+
+    assert restored.id == job.id
+    assert restored.skill == "texto_avatar"
+    assert restored.status is JobStatus.CONCLUIDO
+    assert restored.resultado == job.resultado
+    assert restored.dados == job.dados
+    assert restored.artifacts == job.artifacts
+
+
+def test_migracao_dados_json_preserva_jobs(tmp_path):
+    database = tmp_path / "jobs.sqlite3"
+    store = SQLiteJobStore(database)
+    store.initialize()
+
+    job = _make_job()
+    store.save(job)
+
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "ALTER TABLE jobs DROP COLUMN dados_json"
+        )
+
+    store.initialize()
+
+    restored = store.load_all()[0]
+
+    assert restored.id == job.id
+    assert restored.titulo == job.titulo
+    assert restored.descricao == job.descricao
+    assert restored.dados == {}
+
+    restored.dados = {
+        "fala": "Olá!",
+        "voz": "pt-BR-AntonioNeural",
+    }
+
+    store.save(restored)
+
+    assert store.load_all()[0].dados == restored.dados
+
+
+def test_initialize_dados_json_repetido(tmp_path):
+    database = tmp_path / "jobs.sqlite3"
+    store = SQLiteJobStore(database)
+
+    store.initialize()
+    store.initialize()
+    store.initialize()
+
+    with sqlite3.connect(database) as connection:
+        columns = [
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(jobs)"
+            )
+        ]
+
+    assert columns.count("dados_json") == 1
+
+
+def test_dados_json_invalidos(tmp_path):
+    database = tmp_path / "jobs.sqlite3"
+    store = SQLiteJobStore(database)
+    store.initialize()
+
+    job = _make_job()
+    store.save(job)
+
+    for valor in ("json invalido", "[]", "null"):
+        with sqlite3.connect(database) as connection:
+            connection.execute(
+                "UPDATE jobs SET dados_json = ? WHERE id = ?",
+                (valor, job.id),
+            )
+
+        restored = store.load_all()[0]
+
+        assert restored.id == job.id
+        assert restored.dados == {}

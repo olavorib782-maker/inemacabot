@@ -7,7 +7,10 @@ import re
 from dataclasses import replace
 
 from agent_runner import AgentRunner
+from artifact_store import ArtifactStore
 from job import Job
+from job_artifact import JobArtifact
+from narration_service import NarrationService
 from queue_manager import QueueManager
 from roteiro_validator import (
     contar_palavras,
@@ -33,6 +36,7 @@ class TextWorker(BaseWorker):
         event_bus: JobEventBus | None = None,
         job_registry: JobRegistry | None = None,
         agent_runner: AgentRunner | None = None,
+        artifact_store: ArtifactStore | None = None,
     ) -> None:
         if fila != self._FILA:
             raise ValueError("TextWorker aceita apenas a fila mkitextos.")
@@ -44,12 +48,19 @@ class TextWorker(BaseWorker):
             job_registry=job_registry,
         )
         self.agent_runner = agent_runner
+        self.artifact_store = artifact_store
 
     async def process_job(self, job: Job) -> str:
         """Gera textos e revisa roteiros que excedam a duração."""
 
         if self.agent_runner is None:
             return f"Job {job.id} processado pelo TextWorker."
+
+        if (
+            job.skill == "texto_avatar"
+            and job.dados.get("gerar_audio") is True
+        ):
+            return await self._preparar_narracao(job)
 
         resultado = await self.agent_runner.run(job)
 
@@ -117,6 +128,55 @@ class TextWorker(BaseWorker):
             "pelo controle de duração.\n"
             f"Motivo: {motivo}\n\n"
             f"{revisado}"
+        )
+
+    async def _preparar_narracao(self, job: Job) -> str:
+        if self.artifact_store is None:
+            raise RuntimeError("ArtifactStore não configurado.")
+
+        if self.agent_runner is None:
+            raise RuntimeError("AgentRunner não configurado.")
+
+        segundos = extrair_duracao(job.descricao)
+
+        if segundos is None or segundos <= 0:
+            raise ValueError(
+                "Informe uma duração positiva para a narração."
+            )
+
+        service = NarrationService(
+            agent_runner=self.agent_runner,
+            artifact_store=self.artifact_store,
+        )
+
+        resposta = await self.agent_runner.run(job)
+
+        narracao = await service.preparar(
+            job=job,
+            resposta=resposta,
+            voz=job.dados.get("voz", "pt-BR-AntonioNeural"),
+        )
+
+        job.artifacts.append(
+            JobArtifact(
+                role="output",
+                relative_path=narracao.relative_path,
+                filename="narracao.mp3",
+                media_type="audio/mpeg",
+            )
+        )
+
+        job.dados["narracao"] = narracao.texto
+        job.dados["duracao_real"] = narracao.duracao_real
+        job.dados["duracao_alvo"] = narracao.duracao_alvo
+        job.dados["tentativas_narracao"] = narracao.tentativas
+
+        return (
+            self._atualizar_contagem(narracao.resposta)
+            + f"\\n\\nDuração real do áudio: "
+            f"{narracao.duracao_real:.2f} segundos."
+            f"\\nTentativas: {narracao.tentativas}"
+            "\\nLocução aprovada!"
         )
 
     @staticmethod

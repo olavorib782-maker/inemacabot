@@ -509,3 +509,28 @@ def test_submit_video_photo_com_voz_feminina() -> None:
         assert await manager.get("mkivideos") is job
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "mensagem, gerar_audio",
+    [
+        ("Crie um texto avatar com áudio de 15 segundos", True),
+        ("Crie um texto avatar com audio de 15 segundos", True),
+        ("Texto avatar com áudio de 15 segundos", True),
+        ("Crie um texto avatar de 15 segundos", False),
+    ],
+)
+def test_submit_avatar_controle_audio(mensagem, gerar_audio):
+    async def scenario():
+        service, manager = _make_service()
+
+        job = await service.submit(42, mensagem)
+
+        assert job is not None
+        assert job.skill == "texto_avatar"
+        assert job.fila == "mkitextos"
+        assert job.dados.get("gerar_audio", False) is gerar_audio
+        assert job.descricao == mensagem
+        assert await manager.get("mkitextos") is job
+
+    asyncio.run(scenario())

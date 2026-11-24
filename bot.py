@@ -378,13 +378,25 @@ async def _send_result_document(
     caption: str,
 ) -> None:
     """Envia um artefato já resolvido pelo armazenamento controlado."""
+    legenda_longa = len(caption.encode("utf-16-le")) // 2 > 1024
+
     with path.open("rb") as document:
         await bot.send_document(
             chat_id=chat_id,
             document=document,
             filename=filename,
-            caption=caption,
+            caption=(
+                "Arquivo gerado com sucesso!"
+                if legenda_longa else caption
+            ),
         )
+
+    if legenda_longa:
+        for inicio in range(0, len(caption), 2000):
+            await bot.send_message(
+                chat_id=chat_id,
+                text=caption[inicio:inicio + 2000],
+            )
 
 
 

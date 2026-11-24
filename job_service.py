@@ -154,6 +154,17 @@ class JobService:
             skill=decision.skill,
             titulo=message,
             descricao=message,
+            dados={
+                "gerar_audio": True,
+            } if (
+                decision.skill == "texto_avatar"
+                and message.casefold().startswith(
+                    ("texto avatar com áudio",
+                     "texto avatar com audio",
+                     "crie um texto avatar com áudio",
+                     "crie um texto avatar com audio")
+                )
+            ) else {},
         )
         self.job_registry.add(job)
         await self.queue_manager.put(job)

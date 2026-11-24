@@ -973,3 +973,66 @@ def _make_status_job(titulo: str = "Trabalho") -> Job:
         titulo=titulo,
         descricao="Descrição",
     )
+
+
+def test_send_document_narracao_mp3(tmp_path):
+    async def scenario():
+        path = tmp_path / "narracao.mp3"
+        path.write_bytes(b"audio simulado")
+
+        bot = _RecordingDocumentBot()
+
+        await _send_result_document(
+            bot, 42, path,
+            "narracao.mp3",
+            "Locução aprovada!"
+        )
+
+        assert len(bot.calls) == 1
+        call = bot.calls[0]
+
+        assert call["chat_id"] == 42
+        assert call["filename"] == "narracao.mp3"
+        assert call["caption"] == "Locução aprovada!"
+        assert call["content"] == b"audio simulado"
+
+    asyncio.run(scenario())
+
+
+def test_send_document_legenda_longa(tmp_path):
+    class RecordingBot(_RecordingDocumentBot):
+        def __init__(self):
+            super().__init__()
+            self.messages = []
+
+        async def send_message(self, **kwargs):
+            self.messages.append(kwargs)
+
+    async def scenario():
+        path = tmp_path / "narracao.mp3"
+        path.write_bytes(b"audio simulado")
+
+        bot = RecordingBot()
+        legenda = "Narração aprovada. " * 300
+
+        await _send_result_document(
+            bot, 42, path,
+            "narracao.mp3",
+            legenda,
+        )
+
+        assert len(bot.calls) == 1
+        assert len(bot.calls[0]["caption"]) <= 1024
+        assert bot.calls[0]["content"] == b"audio simulado"
+        assert len(bot.messages) > 1
+
+        assert all(
+            msg["chat_id"] == 42
+            for msg in bot.messages
+        )
+
+        assert "".join(
+            msg["text"] for msg in bot.messages
+        ) == legenda
+
+    asyncio.run(scenario())

@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 from pathlib import Path
 
+import aiohttp
 import edge_tts
+
+logger = logging.getLogger(__name__)
 
 
 async def gerar_voz(
@@ -29,25 +33,71 @@ async def gerar_voz(
         exist_ok=True,
     )
 
-    communicate = edge_tts.Communicate(
-        text=texto,
-        voice=voz,
-        rate=velocidade,
+    temporario = output_path.with_name(
+        output_path.name + ".part"
     )
 
-    await communicate.save(str(output_path))
+    intervalos = (2, 5)
+    max_tentativas = 3
 
-    if not output_path.is_file():
-        raise RuntimeError(
-            "Edge TTS não gerou o arquivo de voz."
-        )
+    try:
+        for tentativa in range(1, max_tentativas + 1):
+            temporario.unlink(missing_ok=True)
 
-    if output_path.stat().st_size == 0:
-        raise RuntimeError(
-            "Edge TTS gerou um arquivo de voz vazio."
-        )
+            try:
+                communicate = edge_tts.Communicate(
+                    text=texto,
+                    voice=voz,
+                    rate=velocidade,
+                )
 
-    return output_path
+                await asyncio.wait_for(
+                    communicate.save(str(temporario)),
+                    timeout=60,
+                )
+
+                if (
+                    not temporario.is_file()
+                    or temporario.stat().st_size == 0
+                ):
+                    raise edge_tts.exceptions.NoAudioReceived(
+                        "Edge TTS nao gerou audio valido."
+                    )
+
+                temporario.replace(output_path)
+
+                logger.info(
+                    "Edge TTS concluido | Tentativa=%s/%s",
+                    tentativa,
+                    max_tentativas,
+                )
+
+                return output_path
+
+            except (
+                edge_tts.exceptions.NoAudioReceived,
+                aiohttp.ClientConnectionError,
+                asyncio.TimeoutError,
+            ) as erro:
+                logger.warning(
+                    "Edge TTS falhou | Tentativa=%s/%s | Erro=%s",
+                    tentativa,
+                    max_tentativas,
+                    type(erro).__name__,
+                )
+
+                temporario.unlink(missing_ok=True)
+
+                if tentativa == max_tentativas:
+                    raise RuntimeError(
+                        "Edge TTS falhou apos 3 tentativas."
+                    ) from erro
+
+                await asyncio.sleep(
+                    intervalos[tentativa - 1]
+                )
+    finally:
+        temporario.unlink(missing_ok=True)
 
 
 async def medir_duracao(arquivo: Path) -> float:

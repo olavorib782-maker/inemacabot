@@ -55,6 +55,7 @@ class WorkerManager:
             ),
             "mkitextos": TextWorker(
                 self.queue_manager,
+                artifact_store=self.artifact_store,
                 event_bus=self.event_bus,
                 job_registry=self.job_registry,
                 agent_runner=self.agent_runner,

@@ -125,3 +125,175 @@ def test_medir_duracao_simulada(monkeypatch, tmp_path):
     assert asyncio.run(
         medir_duracao(arquivo)
     ) == pytest.approx(11.304)
+
+@pytest.mark.parametrize(
+    "falhas, intervalos_esperados",
+    [
+        (1, [2]),
+        (2, [2, 5]),
+    ],
+)
+def test_recuperacao_edge_tts(
+    monkeypatch, tmp_path, falhas, intervalos_esperados
+):
+    from edge_tts.exceptions import NoAudioReceived
+
+    chamadas = []
+    intervalos = []
+
+    class FakeCommunicate:
+        def __init__(self, text, voice, rate):
+            chamadas.append((text, voice, rate))
+
+        async def save(self, path):
+            if len(chamadas) <= falhas:
+                Path(path).write_bytes(b"audio incompleto")
+                raise NoAudioReceived("Falha simulada")
+
+            assert not Path(path).exists()
+            Path(path).write_bytes(b"audio completo")
+
+    async def fake_sleep(segundos):
+        intervalos.append(segundos)
+
+    monkeypatch.setattr(
+        "audio_service.edge_tts.Communicate",
+        FakeCommunicate,
+    )
+    monkeypatch.setattr(
+        "audio_service.asyncio.sleep",
+        fake_sleep,
+    )
+
+    saida = tmp_path / "voz.mp3"
+
+    resultado = asyncio.run(
+        gerar_voz("Teste de recuperacao", saida)
+    )
+
+    assert resultado == saida
+    assert len(chamadas) == falhas + 1
+    assert len(set(chamadas)) == 1
+    assert intervalos == intervalos_esperados
+    assert saida.read_bytes() == b"audio completo"
+    assert not (tmp_path / "voz.mp3.part").exists()
+
+
+@pytest.mark.parametrize(
+    "tipo_falha",
+    ["sem_audio", "timeout", "conexao", "arquivo_vazio"],
+)
+def test_recuperacao_por_tipo_de_falha(
+    monkeypatch, tmp_path, tipo_falha
+):
+    import aiohttp
+    from edge_tts.exceptions import NoAudioReceived
+
+    chamadas = []
+
+    class FakeCommunicate:
+        def __init__(self, text, voice, rate):
+            chamadas.append(text)
+
+        async def save(self, path):
+            if len(chamadas) == 1:
+                if tipo_falha == "sem_audio":
+                    raise NoAudioReceived("Sem audio")
+
+                if tipo_falha == "timeout":
+                    raise asyncio.TimeoutError()
+
+                if tipo_falha == "conexao":
+                    raise aiohttp.ClientConnectionError()
+
+                Path(path).write_bytes(b"")
+                return
+
+            Path(path).write_bytes(b"audio recuperado")
+
+    async def fake_sleep(segundos):
+        pass
+
+    monkeypatch.setattr(
+        "audio_service.edge_tts.Communicate",
+        FakeCommunicate,
+    )
+    monkeypatch.setattr(
+        "audio_service.asyncio.sleep",
+        fake_sleep,
+    )
+
+    saida = tmp_path / "voz.mp3"
+
+    asyncio.run(gerar_voz("Teste", saida))
+
+    assert len(chamadas) == 2
+    assert saida.read_bytes() == b"audio recuperado"
+    assert not (tmp_path / "voz.mp3.part").exists()
+
+
+def test_edge_tts_esgota_tentativas(
+    monkeypatch, tmp_path
+):
+    from edge_tts.exceptions import NoAudioReceived
+
+    chamadas = []
+    intervalos = []
+
+    class FakeCommunicate:
+        def __init__(self, text, voice, rate):
+            chamadas.append(text)
+
+        async def save(self, path):
+            Path(path).write_bytes(b"incompleto")
+            raise NoAudioReceived("Falha persistente")
+
+    async def fake_sleep(segundos):
+        intervalos.append(segundos)
+
+    monkeypatch.setattr(
+        "audio_service.edge_tts.Communicate",
+        FakeCommunicate,
+    )
+    monkeypatch.setattr(
+        "audio_service.asyncio.sleep",
+        fake_sleep,
+    )
+
+    saida = tmp_path / "voz.mp3"
+
+    with pytest.raises(
+        RuntimeError,
+        match="falhou apos 3 tentativas",
+    ):
+        asyncio.run(gerar_voz("Teste", saida))
+
+    assert len(chamadas) == 3
+    assert intervalos == [2, 5]
+    assert not saida.exists()
+    assert not (tmp_path / "voz.mp3.part").exists()
+
+
+def test_edge_tts_erro_permanente_sem_retry(
+    monkeypatch, tmp_path
+):
+    chamadas = []
+
+    class FakeCommunicate:
+        def __init__(self, text, voice, rate):
+            chamadas.append(text)
+            raise ValueError("Parametro invalido")
+
+    monkeypatch.setattr(
+        "audio_service.edge_tts.Communicate",
+        FakeCommunicate,
+    )
+
+    saida = tmp_path / "voz.mp3"
+
+    with pytest.raises(ValueError):
+        asyncio.run(gerar_voz("Teste", saida))
+
+    assert len(chamadas) == 1
+    assert not saida.exists()
+    assert not (tmp_path / "voz.mp3.part").exists()

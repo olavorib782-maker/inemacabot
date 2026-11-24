@@ -38,7 +38,8 @@ class SQLiteJobStore:
                     criada_em TEXT NOT NULL,
                     atualizada_em TEXT NOT NULL,
                     resultado TEXT NOT NULL DEFAULT '',
-                    artifacts_json TEXT NOT NULL DEFAULT '[]'
+                    artifacts_json TEXT NOT NULL DEFAULT '[]',
+                    dados_json TEXT NOT NULL DEFAULT '{}'
                 )
                 """
             )
@@ -49,6 +50,12 @@ class SQLiteJobStore:
                 connection.execute(
                     "ALTER TABLE jobs ADD COLUMN artifacts_json "
                     "TEXT NOT NULL DEFAULT '[]'"
+                )
+
+            if "dados_json" not in columns:
+                connection.execute(
+                    "ALTER TABLE jobs ADD COLUMN dados_json "
+                    "TEXT NOT NULL DEFAULT '{}'"
                 )
 
     def save(self, job: Job) -> None:
@@ -78,6 +85,7 @@ class SQLiteJobStore:
                 ],
                 ensure_ascii=False,
             ),
+            json.dumps(job.dados, ensure_ascii=False, allow_nan=False),
         )
         with self._lock, closing(self._connect()) as connection, connection:
             connection.execute(
@@ -85,8 +93,8 @@ class SQLiteJobStore:
                 INSERT INTO jobs (
                     id, chat_id, fila, tipo, skill, titulo, descricao,
                     status, prioridade, criada_em, atualizada_em, resultado,
-                    artifacts_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    artifacts_json, dados_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     chat_id = excluded.chat_id,
                     fila = excluded.fila,
@@ -99,7 +107,8 @@ class SQLiteJobStore:
                     criada_em = excluded.criada_em,
                     atualizada_em = excluded.atualizada_em,
                     resultado = excluded.resultado,
-                    artifacts_json = excluded.artifacts_json
+                    artifacts_json = excluded.artifacts_json,
+                    dados_json = excluded.dados_json
                 """,
                 values,
             )
@@ -111,7 +120,7 @@ class SQLiteJobStore:
                 """
                 SELECT id, chat_id, fila, tipo, skill, titulo, descricao,
                        status, prioridade, criada_em, atualizada_em, resultado,
-                       artifacts_json
+                       artifacts_json, dados_json
                 FROM jobs
                 ORDER BY criada_em, id
                 """
@@ -132,6 +141,7 @@ class SQLiteJobStore:
                 atualizada_em=datetime.fromisoformat(row[10]),
                 resultado=row[11],
                 artifacts=self._deserialize_artifacts(row[12]),
+                dados=self._deserialize_dados(row[13]),
             )
             for row in rows
         ]
@@ -158,6 +168,14 @@ class SQLiteJobStore:
             ]
         except (json.JSONDecodeError, TypeError):
             return []
+
+    @staticmethod
+    def _deserialize_dados(value: str) -> dict:
+        try:
+            dados = json.loads(value)
+            return dados if isinstance(dados, dict) else {}
+        except (json.JSONDecodeError, TypeError):
+            return {}
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database_path, timeout=5)
