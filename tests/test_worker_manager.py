@@ -67,7 +67,7 @@ def test_worker_manager_injeta_mesma_instancia_no_video_worker() -> None:
         video_worker = manager.workers["mkivideos"]
         assert isinstance(video_worker, VideoWorker)
         assert video_worker.agent_runner is agent_runner
-        assert not hasattr(manager.workers["mkitextos"], "agent_runner")
+        assert manager.workers["mkitextos"].agent_runner is agent_runner
         assert not hasattr(manager.workers["mkiservicos"], "agent_runner")
         await manager.stop()
 

@@ -57,6 +57,7 @@ class WorkerManager:
                 self.queue_manager,
                 event_bus=self.event_bus,
                 job_registry=self.job_registry,
+                agent_runner=self.agent_runner,
             ),
             "mkiservicos": ServiceWorker(
                 self.queue_manager,

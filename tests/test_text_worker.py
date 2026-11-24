@@ -67,3 +67,210 @@ async def _cancel(task: asyncio.Task[None]) -> None:
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
+
+def test_text_worker_revisa_roteiro_longo_uma_vez() -> None:
+    class FakeAgentRunner:
+        def __init__(self) -> None:
+            self.descricoes: list[str] = []
+
+        async def run(self, job: Job) -> str:
+            self.descricoes.append(job.descricao)
+
+            if len(self.descricoes) == 1:
+                narracao = " ".join(["música"] * 45)
+            else:
+                narracao = "Boa noite! Recebam nosso saxofonista."
+
+            return (
+                "Título: Apresentação\n\n"
+                "Narração pronta:\n"
+                f"{narracao}\n\n"
+                "Palavras da narração: 45\n"
+            )
+
+    async def scenario() -> None:
+        runner = FakeAgentRunner()
+        worker = TextWorker(
+            QueueManager(),
+            agent_runner=runner,
+        )
+        job = Job(
+            42,
+            "mkitextos",
+            "texto",
+            "roteiro",
+            "Apresentação",
+            "Crie um roteiro de 20 segundos.",
+        )
+
+        resultado = await worker.process_job(job)
+
+        assert len(runner.descricoes) == 2
+        assert "Recebam nosso saxofonista" in resultado
+        assert job.descricao == "Crie um roteiro de 20 segundos."
+
+    asyncio.run(scenario())
+
+def test_roteiro_aprovado_nao_faz_revisao() -> None:
+    class FakeRunner:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def run(self, job: Job) -> str:
+            self.calls += 1
+            return (
+                "Título: Apresentação\n\n"
+                "Narração pronta:\n"
+                "Boa noite! Recebam nosso saxofonista.\n\n"
+                "Palavras da narração: 5\n"
+            )
+
+    async def scenario() -> None:
+        runner = FakeRunner()
+        worker = TextWorker(QueueManager(), agent_runner=runner)
+        job = Job(
+            42, "mkitextos", "texto", "roteiro",
+            "Apresentação", "Crie um roteiro de 20 segundos."
+        )
+
+        resultado = await worker.process_job(job)
+
+        assert runner.calls == 1
+        assert "Recebam nosso saxofonista" in resultado
+
+    asyncio.run(scenario())
+
+
+def test_roteiro_longo_apos_revisao_recebe_aviso() -> None:
+    class FakeRunner:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def run(self, job: Job) -> str:
+            self.calls += 1
+            narracao = " ".join(["música"] * 45)
+            return (
+                "Título: Apresentação\n\n"
+                "Narração pronta:\n"
+                f"{narracao}\n\n"
+                "Palavras da narração: 45\n"
+            )
+
+    async def scenario() -> None:
+        runner = FakeRunner()
+        worker = TextWorker(QueueManager(), agent_runner=runner)
+        job = Job(
+            42, "mkitextos", "texto", "roteiro",
+            "Apresentação", "Crie um roteiro de 20 segundos."
+        )
+
+        resultado = await worker.process_job(job)
+
+        assert runner.calls == 2
+        assert "não aprovado" in resultado
+        assert "45 palavras" in resultado
+
+    asyncio.run(scenario())
+
+
+def test_outra_skill_nao_passa_pelo_validador() -> None:
+    class FakeRunner:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def run(self, job: Job) -> str:
+            self.calls += 1
+            return "Texto gerado normalmente."
+
+    async def scenario() -> None:
+        runner = FakeRunner()
+        worker = TextWorker(QueueManager(), agent_runner=runner)
+        job = Job(
+            42, "mkitextos", "texto", "traducao",
+            "Tradução", "Traduza este texto."
+        )
+
+        resultado = await worker.process_job(job)
+
+        assert runner.calls == 1
+        assert resultado == "Texto gerado normalmente."
+
+    asyncio.run(scenario())
+def test_atualizar_contagem_corrige_numero_incorreto() -> None:
+    resposta = """Título: Apresentação
+
+Narração pronta:
+Boa noite! Recebam nosso saxofonista.
+
+Palavras da narração: 45
+
+Duração estimada: 20 segundos
+"""
+
+    resultado = TextWorker._atualizar_contagem(resposta)
+
+    assert "Palavras da narração: 5" in resultado
+    assert "Palavras da narração: 45" not in resultado
+    assert "Duração estimada: 20 segundos" in resultado
+
+
+def test_roteiro_duracao_zero_nao_faz_revisao() -> None:
+    class FakeRunner:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def run(self, job: Job) -> str:
+            self.calls += 1
+            return "Roteiro gerado."
+
+    async def scenario() -> None:
+        runner = FakeRunner()
+        worker = TextWorker(QueueManager(), agent_runner=runner)
+
+        job = Job(
+            42,
+            "mkitextos",
+            "texto",
+            "roteiro",
+            "Apresentação",
+            "Crie um roteiro de 0 segundos.",
+        )
+
+        resultado = await worker.process_job(job)
+
+        assert runner.calls == 1
+        assert "Duração inválida" in resultado
+
+    asyncio.run(scenario())
+
+
+def test_roteiro_incompleto_apos_revisao_recebe_aviso() -> None:
+    class FakeRunner:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def run(self, job: Job) -> str:
+            self.calls += 1
+            return "Título: Apresentação\\n\\nRoteiro ainda sem narração."
+
+    async def scenario() -> None:
+        runner = FakeRunner()
+        worker = TextWorker(QueueManager(), agent_runner=runner)
+
+        job = Job(
+            42,
+            "mkitextos",
+            "texto",
+            "roteiro",
+            "Apresentação",
+            "Crie um roteiro de 20 segundos.",
+        )
+
+        resultado = await worker.process_job(job)
+
+        assert runner.calls == 2
+        assert "não aprovado" in resultado
+        assert "Não foi possível identificar a narração" in resultado
+        assert job.descricao == "Crie um roteiro de 20 segundos."
+
+    asyncio.run(scenario())
