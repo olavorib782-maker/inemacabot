@@ -68,7 +68,8 @@ async def _cancel(task: asyncio.Task[None]) -> None:
     with pytest.raises(asyncio.CancelledError):
         await task
 
-def test_text_worker_revisa_roteiro_longo_uma_vez() -> None:
+@pytest.mark.parametrize("skill", ["roteiro", "texto_avatar"])
+def test_text_worker_revisa_roteiro_longo_uma_vez(skill: str) -> None:
     class FakeAgentRunner:
         def __init__(self) -> None:
             self.descricoes: list[str] = []
@@ -98,7 +99,7 @@ def test_text_worker_revisa_roteiro_longo_uma_vez() -> None:
             42,
             "mkitextos",
             "texto",
-            "roteiro",
+            skill,
             "Apresentação",
             "Crie um roteiro de 20 segundos.",
         )
@@ -111,7 +112,8 @@ def test_text_worker_revisa_roteiro_longo_uma_vez() -> None:
 
     asyncio.run(scenario())
 
-def test_roteiro_aprovado_nao_faz_revisao() -> None:
+@pytest.mark.parametrize("skill", ["roteiro", "texto_avatar"])
+def test_roteiro_aprovado_nao_faz_revisao(skill: str) -> None:
     class FakeRunner:
         def __init__(self) -> None:
             self.calls = 0
@@ -129,7 +131,7 @@ def test_roteiro_aprovado_nao_faz_revisao() -> None:
         runner = FakeRunner()
         worker = TextWorker(QueueManager(), agent_runner=runner)
         job = Job(
-            42, "mkitextos", "texto", "roteiro",
+            42, "mkitextos", "texto", skill,
             "Apresentação", "Crie um roteiro de 20 segundos."
         )
 
@@ -141,7 +143,8 @@ def test_roteiro_aprovado_nao_faz_revisao() -> None:
     asyncio.run(scenario())
 
 
-def test_roteiro_longo_apos_revisao_recebe_aviso() -> None:
+@pytest.mark.parametrize("skill", ["roteiro", "texto_avatar"])
+def test_roteiro_longo_apos_revisao_recebe_aviso(skill: str) -> None:
     class FakeRunner:
         def __init__(self) -> None:
             self.calls = 0
@@ -160,7 +163,7 @@ def test_roteiro_longo_apos_revisao_recebe_aviso() -> None:
         runner = FakeRunner()
         worker = TextWorker(QueueManager(), agent_runner=runner)
         job = Job(
-            42, "mkitextos", "texto", "roteiro",
+            42, "mkitextos", "texto", skill,
             "Apresentação", "Crie um roteiro de 20 segundos."
         )
 
@@ -214,7 +217,8 @@ Duração estimada: 20 segundos
     assert "Duração estimada: 20 segundos" in resultado
 
 
-def test_roteiro_duracao_zero_nao_faz_revisao() -> None:
+@pytest.mark.parametrize("skill", ["roteiro", "texto_avatar"])
+def test_roteiro_duracao_zero_nao_faz_revisao(skill: str) -> None:
     class FakeRunner:
         def __init__(self) -> None:
             self.calls = 0
@@ -231,7 +235,7 @@ def test_roteiro_duracao_zero_nao_faz_revisao() -> None:
             42,
             "mkitextos",
             "texto",
-            "roteiro",
+            skill,
             "Apresentação",
             "Crie um roteiro de 0 segundos.",
         )
@@ -244,7 +248,8 @@ def test_roteiro_duracao_zero_nao_faz_revisao() -> None:
     asyncio.run(scenario())
 
 
-def test_roteiro_incompleto_apos_revisao_recebe_aviso() -> None:
+@pytest.mark.parametrize("skill", ["roteiro", "texto_avatar"])
+def test_roteiro_incompleto_apos_revisao_recebe_aviso(skill: str) -> None:
     class FakeRunner:
         def __init__(self) -> None:
             self.calls = 0
@@ -261,7 +266,7 @@ def test_roteiro_incompleto_apos_revisao_recebe_aviso() -> None:
             42,
             "mkitextos",
             "texto",
-            "roteiro",
+            skill,
             "Apresentação",
             "Crie um roteiro de 20 segundos.",
         )

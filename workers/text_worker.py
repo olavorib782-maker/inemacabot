@@ -54,7 +54,7 @@ class TextWorker(BaseWorker):
         resultado = await self.agent_runner.run(job)
 
         # As outras habilidades não passam pelo validador.
-        if job.skill != "roteiro":
+        if job.skill not in {"roteiro", "texto_avatar"}:
             return resultado
 
         segundos = extrair_duracao(job.descricao)

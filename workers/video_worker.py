@@ -7,7 +7,7 @@ import logging
 import os
 import shutil
 
-import edge_tts
+from audio_service import gerar_voz, medir_duracao
 import httpx
 from pathlib import Path
 
@@ -757,41 +757,12 @@ class VideoWorker(BaseWorker):
 
         return video_path
 
-    async def _probe_video_duration(self, video_path: Path) -> float:
-        """Obtém a duração real de um vídeo usando ffprobe."""
+    async def _probe_video_duration(
+        self, video_path: Path
+    ) -> float:
+        """Mede a duração usando o serviço compartilhado."""
 
-        proc = await asyncio.create_subprocess_exec(
-            "ffprobe",
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            str(video_path),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-
-        stdout, stderr = await proc.communicate()
-
-        if proc.returncode != 0:
-            detalhe = stderr.decode(
-                "utf-8",
-                errors="ignore",
-            )
-            raise RuntimeError(
-                f"Falha ao medir duração de {video_path.name}: "
-                f"{detalhe[-800:]}"
-            )
-
-        try:
-            return float(stdout.decode("utf-8").strip())
-        except ValueError as exc:
-            raise RuntimeError(
-                f"ffprobe retornou duração inválida para "
-                f"{video_path.name}."
-            ) from exc
+        return await medir_duracao(video_path)
 
     @staticmethod
     def _calculate_xfade_offsets(
@@ -1099,39 +1070,13 @@ class VideoWorker(BaseWorker):
         output_path: Path,
         voice: str = "pt-BR-AntonioNeural",
     ) -> Path:
-        """Gera a voz do personagem usando Edge TTS."""
+        """Gera voz usando o serviço compartilhado."""
 
-        text = text.strip()
-
-        if not text:
-            raise ValueError(
-                "Texto da fala não pode estar vazio."
-            )
-
-        output_path.parent.mkdir(
-            parents=True,
-            exist_ok=True,
+        return await gerar_voz(
+            texto=text,
+            output_path=output_path,
+            voz=voice,
         )
-
-        communicate = edge_tts.Communicate(
-            text=text,
-            voice=voice,
-            rate="-8%",
-        )
-
-        await communicate.save(str(output_path))
-
-        if not output_path.is_file():
-            raise RuntimeError(
-                "Edge TTS não gerou o arquivo de voz."
-            )
-
-        if output_path.stat().st_size == 0:
-            raise RuntimeError(
-                "Edge TTS gerou um arquivo de voz vazio."
-            )
-
-        return output_path
 
     def _get_kie_api_key(self) -> str:
         """Obtém a chave KIE do ambiente ou do arquivo .env."""
