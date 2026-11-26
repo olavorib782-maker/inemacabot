@@ -534,3 +534,30 @@ def test_submit_avatar_controle_audio(mensagem, gerar_audio):
         assert await manager.get("mkitextos") is job
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "mensagem, audio, premium",
+    [
+        ("Texto avatar com voz Brian de 15 segundos", True, True),
+        ("Crie um texto avatar com voz Brian de 15 segundos", True, True),
+        ("TEXTO AVATAR COM VOZ BRIAN de 15 segundos", True, True),
+        ("Texto avatar com voz BrianXYZ de 15 segundos", False, False),
+        ("Texto avatar de 15 segundos sobre Brian", False, False),
+        ("Texto avatar com áudio de 15 segundos sobre Brian", True, False),
+    ],
+)
+def test_submit_avatar_premium(mensagem, audio, premium):
+    async def scenario():
+        service, manager = _make_service()
+        job = await service.submit(42, mensagem)
+
+        assert job is not None
+        assert job.skill == "texto_avatar"
+        assert job.fila == "mkitextos"
+        assert job.dados.get("gerar_audio", False) is audio
+        assert job.dados.get("premium_autorizado", False) is premium
+        assert (job.dados.get("motor_voz") == "elevenlabs") is premium
+        assert await manager.get("mkitextos") is job
+
+    asyncio.run(scenario())

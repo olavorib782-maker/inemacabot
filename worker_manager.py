@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from agent_runner import AgentRunner
 from artifact_store import ArtifactStore
@@ -28,6 +29,7 @@ class WorkerManager:
         job_registry: JobRegistry | None = None,
         improvisor_client: ImproVisorClient | None = None,
         artifact_store: ArtifactStore | None = None,
+        paid_tasks_db_path: Path | None = None,
     ) -> None:
         self.queue_manager = queue_manager
         self.agent_runner = agent_runner
@@ -37,6 +39,7 @@ class WorkerManager:
             raise ValueError("ImproVisorClient é obrigatório no WorkerManager.")
         self.improvisor_client = improvisor_client
         self.artifact_store = artifact_store or ArtifactStore("artifacts")
+        self.paid_tasks_db_path = paid_tasks_db_path
         self.workers: dict[str, BaseWorker] = {}
         self.tasks: dict[str, asyncio.Task[None]] = {}
 
@@ -59,6 +62,7 @@ class WorkerManager:
                 event_bus=self.event_bus,
                 job_registry=self.job_registry,
                 agent_runner=self.agent_runner,
+                paid_tasks_db_path=self.paid_tasks_db_path,
             ),
             "mkiservicos": ServiceWorker(
                 self.queue_manager,

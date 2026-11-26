@@ -156,6 +156,16 @@ class JobService:
             descricao=message,
             dados={
                 "gerar_audio": True,
+                "motor_voz": "elevenlabs",
+                "premium_autorizado": True,
+            } if (
+                decision.skill == "texto_avatar"
+                and message.casefold().startswith(
+                    ("texto avatar com voz brian ",
+                     "crie um texto avatar com voz brian ")
+                )
+            ) else {
+                "gerar_audio": True,
             } if (
                 decision.skill == "texto_avatar"
                 and message.casefold().startswith(

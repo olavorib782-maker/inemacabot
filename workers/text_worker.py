@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from dataclasses import replace
 
 from agent_runner import AgentRunner
@@ -11,6 +12,9 @@ from artifact_store import ArtifactStore
 from job import Job
 from job_artifact import JobArtifact
 from narration_service import NarrationService
+from kie_client import KieClient
+from paid_task_guard import PaidTaskGuard
+from elevenlabs_service import VOZ_BRIAN
 from queue_manager import QueueManager
 from roteiro_validator import (
     contar_palavras,
@@ -37,6 +41,7 @@ class TextWorker(BaseWorker):
         job_registry: JobRegistry | None = None,
         agent_runner: AgentRunner | None = None,
         artifact_store: ArtifactStore | None = None,
+        paid_tasks_db_path: Path | None = None,
     ) -> None:
         if fila != self._FILA:
             raise ValueError("TextWorker aceita apenas a fila mkitextos.")
@@ -49,6 +54,7 @@ class TextWorker(BaseWorker):
         )
         self.agent_runner = agent_runner
         self.artifact_store = artifact_store
+        self.paid_tasks_db_path = paid_tasks_db_path
 
     async def process_job(self, job: Job) -> str:
         """Gera textos e revisa roteiros que excedam a duração."""
@@ -151,17 +157,36 @@ class TextWorker(BaseWorker):
 
         resposta = await self.agent_runner.run(job)
 
-        narracao = await service.preparar(
-            job=job,
-            resposta=resposta,
-            voz=job.dados.get("voz", "pt-BR-AntonioNeural"),
-        )
+        if job.dados.get("motor_voz") == "elevenlabs":
+            if job.dados.get("premium_autorizado") is not True:
+                raise PermissionError("Voz premium nao autorizada.")
+
+            if self.paid_tasks_db_path is None:
+                raise RuntimeError("Banco premium nao configurado.")
+
+            guard = PaidTaskGuard(self.paid_tasks_db_path)
+            cliente = KieClient()
+
+            narracao = await service.preparar_premium(
+                job=job,
+                resposta=resposta,
+                guard=guard,
+                cliente=cliente,
+                autorizado=True,
+                voz=VOZ_BRIAN,
+            )
+        else:
+            narracao = await service.preparar(
+                job=job,
+                resposta=resposta,
+                voz=job.dados.get("voz", "pt-BR-AntonioNeural"),
+            )
 
         job.artifacts.append(
             JobArtifact(
                 role="output",
                 relative_path=narracao.relative_path,
-                filename="narracao.mp3",
+                filename=narracao.audio_path.name,
                 media_type="audio/mpeg",
             )
         )
@@ -170,13 +195,24 @@ class TextWorker(BaseWorker):
         job.dados["duracao_real"] = narracao.duracao_real
         job.dados["duracao_alvo"] = narracao.duracao_alvo
         job.dados["tentativas_narracao"] = narracao.tentativas
+        job.dados["motor_voz"] = narracao.motor
+        job.dados["narracao_aprovada"] = narracao.aprovado
+        if narracao.task_id is not None:
+            job.dados["kie_task_id"] = narracao.task_id
+        if narracao.observacao:
+            job.dados["observacao_narracao"] = narracao.observacao
 
         return (
             self._atualizar_contagem(narracao.resposta)
-            + f"\\n\\nDuração real do áudio: "
+            + f"\n\nDuração real do áudio: "
             f"{narracao.duracao_real:.2f} segundos."
-            f"\\nTentativas: {narracao.tentativas}"
-            "\\nLocução aprovada!"
+            f"\nTentativas: {narracao.tentativas}"
+            + (
+                "\nLocução aprovada!"
+                if narracao.aprovado
+                else f"\nAtenção: {narracao.observacao}"
+            )
+            + f"\nMotor de voz: {narracao.motor}"
         )
 
     @staticmethod

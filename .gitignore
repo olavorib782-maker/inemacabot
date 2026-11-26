@@ -34,3 +34,7 @@ pytest_temp/
 
 # Logs locais
 *.log
+
+# Banco de controle de tarefas pagas
+/paid_tasks.db
+/paid_tasks.db-*

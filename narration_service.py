@@ -14,6 +14,12 @@ from audio_service import (
     validar_duracao,
 )
 from job import Job
+from kie_client import KieClient
+from paid_task_guard import PaidTaskGuard
+from elevenlabs_service import (
+    gerar_narracao_premium,
+    VOZ_BRIAN,
+)
 from roteiro_validator import (
     contar_palavras,
     extrair_duracao,
@@ -39,6 +45,10 @@ class NarrationResult:
     duracao_real: float
     duracao_alvo: int
     tentativas: int
+    motor: str = "edge_tts"
+    aprovado: bool = True
+    observacao: str = ""
+    task_id: str | None = None
 
 
 class NarrationService:
@@ -205,3 +215,116 @@ class NarrationService:
 
         finally:
             temporario.unlink(missing_ok=True)
+
+
+    async def preparar_premium(
+        self,
+        job: Job,
+        resposta: str,
+        guard: PaidTaskGuard,
+        cliente: KieClient,
+        autorizado: bool = False,
+        voz: str = VOZ_BRIAN,
+    ) -> NarrationResult:
+        """Prepara uma locucao premium sem repeticao paga."""
+
+        if autorizado is not True:
+            raise PermissionError(
+                "Narracao premium nao autorizada."
+            )
+
+        alvo = extrair_duracao(job.descricao)
+
+        if alvo is None or alvo <= 0:
+            raise NarrationError(
+                "Informe uma duracao positiva."
+            )
+
+        limite = limite_palavras(alvo)
+
+        for tentativa in range(1, self.max_revisoes + 2):
+
+            aprovado_texto, motivo = validar_roteiro(
+                job.descricao, resposta
+            )
+
+            texto = extrair_narracao(resposta)
+
+            if aprovado_texto and texto:
+                break
+
+            if tentativa > self.max_revisoes:
+                raise NarrationError(
+                    f"Texto premium nao aprovado: {motivo}"
+                )
+
+            instrucao = (
+                f"{job.descricao}\n\n"
+                "REVISAO OBRIGATORIA DA NARRACAO:\n"
+                f"Motivo: {motivo}\n"
+                f"Limite: {limite} palavras.\n"
+                "Use portugues brasileiro natural.\n"
+                "Nao invente fatos, nomes ou datas.\n"
+                "Nao use tags ou instrucoes vocais.\n"
+                "Preserve o formato original da skill.\n\n"
+                f"RESPOSTA ANTERIOR:\n{resposta}"
+            )
+
+            resposta = await self.agent_runner.run(
+                replace(job, descricao=instrucao)
+            )
+
+        relative_path, audio_path = (
+            self.artifact_store.job_path(
+                job.id, "narracao-premium.mp3"
+            )
+        )
+
+        resultado = await gerar_narracao_premium(
+            job_id=job.id,
+            texto=texto,
+            output_path=audio_path,
+            guard=guard,
+            cliente=cliente,
+            autorizado=True,
+            voz=voz,
+        )
+
+        duracao = resultado["duracao_real"]
+
+        aprovado, acao = validar_duracao(
+            duracao, alvo
+        )
+
+        observacao = ""
+
+        if not aprovado:
+            observacao = (
+                f"Duracao fora do intervalo desejado: "
+                f"{duracao:.2f}s para {alvo}s. "
+                "Audio preservado. "
+                "Nenhuma nova geracao paga realizada."
+            )
+
+        logger.info(
+            "Job %s | ElevenLabs | Audio=%.3fs | "
+            "Alvo=%ss | Resultado=%s",
+            job.id,
+            duracao,
+            alvo,
+            acao,
+        )
+
+        return NarrationResult(
+            resposta=resposta,
+            texto=texto,
+            relative_path=relative_path,
+            audio_path=audio_path,
+            duracao_real=duracao,
+            duracao_alvo=alvo,
+            tentativas=tentativa,
+            motor="elevenlabs",
+            aprovado=aprovado,
+            observacao=observacao,
+            task_id=resultado["task_id"],
+        )

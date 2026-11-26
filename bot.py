@@ -503,6 +503,9 @@ def create_application(settings: Settings) -> Application:
             job_registry=job_registry,
             improvisor_client=improvisor_client,
             artifact_store=artifact_store,
+            paid_tasks_db_path=Path(
+                settings.jobs_db_path
+            ).with_name("paid_tasks.db"),
         ),
         skill_loader=skill_loader,
         agent_runner=agent_runner,
