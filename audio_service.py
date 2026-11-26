@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import json
 import math
 from pathlib import Path
 
@@ -169,3 +170,84 @@ def validar_duracao(
         return False, "ampliar"
 
     return True, "aprovado"
+
+
+async def validar_audio_mp3(arquivo: Path) -> float:
+    """Valida formato, codec e duracao de um audio MP3."""
+
+    arquivo = Path(arquivo).resolve()
+
+    if not arquivo.is_file():
+        raise FileNotFoundError(arquivo)
+
+    if arquivo.stat().st_size == 0:
+        raise RuntimeError("Arquivo de audio vazio.")
+
+    proc = await asyncio.create_subprocess_exec(
+        "ffprobe",
+        "-v", "error",
+        "-show_entries",
+        "stream=codec_type,codec_name:format=format_name,duration",
+        "-of", "json",
+        str(arquivo),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(),
+            timeout=30,
+        )
+    except asyncio.TimeoutError as erro:
+        if proc.returncode is None:
+            proc.kill()
+        await proc.communicate()
+        raise RuntimeError(
+            "Tempo esgotado na validacao do audio."
+        ) from erro
+
+    if proc.returncode != 0 or stderr.strip():
+        raise RuntimeError(
+            "FFprobe encontrou um audio invalido."
+        )
+
+    try:
+        dados = json.loads(stdout)
+        formato = dados.get("format", {})
+        streams = dados.get("streams", [])
+
+        duracao = float(formato.get("duration", 0))
+
+    except (ValueError, TypeError) as erro:
+        raise RuntimeError(
+            "Metadados de audio invalidos."
+        ) from erro
+
+    if formato.get("format_name") != "mp3":
+        raise RuntimeError("Formato recebido nao e MP3.")
+
+    audios = [
+        stream for stream in streams
+        if stream.get("codec_type") == "audio"
+    ]
+
+    if not audios:
+        raise RuntimeError("Nenhuma faixa de audio encontrada.")
+
+    if any(
+        stream.get("codec_name") != "mp3"
+        for stream in audios
+    ):
+        raise RuntimeError("Codec de audio incompativel.")
+
+    if not math.isfinite(duracao) or duracao <= 0:
+        raise RuntimeError("Duracao de audio invalida.")
+
+    logger.info(
+        "Audio MP3 validado | Arquivo=%s | Duracao=%.3fs",
+        arquivo.name,
+        duracao,
+    )
+
+    return duracao
