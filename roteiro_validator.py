@@ -49,13 +49,22 @@ def limite_palavras(segundos: int) -> int:
 
 
 def extrair_narracao(resposta: str) -> str | None:
-    """Extrai a narração sem incluir as demais seções."""
+    """Extrai a narracao com suporte a variacoes Markdown."""
+    prefixo = r"^[ \t]*(?:#{1,6}[ \t]+)?\*{0,2}"
+    sufixo = r"\*{0,2}[ \t]*:\*{0,2}[ \t]*"
+
     padrao = (
-        r"^\s*\*{0,2}Narração pronta:\*{0,2}\s*$"
-        r"(.*?)"
-        r"(?=^\s*\*{0,2}(?:Palavras da narração|"
-        r"Duração estimada|Sugestões visuais|Trilha sonora)"
-        r":\*{0,2}|\Z)"
+        prefixo
+        + r"Narração(?:[ \t]+pronta)?"
+        + sufixo
+        + r"(.*?)"
+        + r"(?="
+        + prefixo
+        + r"(?:Palavras da narração|Duração estimada|"
+          r"Sugestões visuais|Trilha sonora|"
+          r"Título|Duração solicitada|Narração(?: pronta)?)"
+        + sufixo
+        + r"|\Z)"
     )
 
     match = re.search(
@@ -67,7 +76,7 @@ def extrair_narracao(resposta: str) -> str | None:
     if not match:
         return None
 
-    return match.group(1).strip()
+    return match.group(1).strip() or None
 
 
 def contar_palavras(texto: str) -> int:

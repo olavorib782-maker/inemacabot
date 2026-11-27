@@ -78,3 +78,38 @@ def test_roteiro_sem_narracao():
 
     assert aprovado is False
     assert "Não foi possível identificar" in mensagem
+
+
+def test_narracao_mesma_linha():
+    resposta = "Narração pronta: A música acalma."
+    assert extrair_narracao(resposta) == "A música acalma."
+
+
+def test_narracao_markdown():
+    resposta = "### Narração pronta:\nA música acalma."
+    assert extrair_narracao(resposta) == "A música acalma."
+
+
+def test_narracao_negrito():
+    resposta = "**Narração pronta**: A música acalma."
+    assert extrair_narracao(resposta) == "A música acalma."
+
+
+def test_narracao_titulo_simples():
+    resposta = "Narração:\nA música acalma."
+    assert extrair_narracao(resposta) == "A música acalma."
+
+
+def test_narracao_separar_secoes():
+    resposta = (
+        "### Narração pronta:\n"
+        "A música acalma.\n\n"
+        "### Sugestões visuais:\n"
+        "Expressão serena."
+    )
+    assert extrair_narracao(resposta) == "A música acalma."
+
+
+def test_narracao_vazia():
+    resposta = "Narração pronta:\n\nTrilha sonora: Piano."
+    assert not extrair_narracao(resposta)
