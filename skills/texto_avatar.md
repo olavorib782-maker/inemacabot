@@ -58,6 +58,28 @@ da pontuação e da velocidade de reprodução.
 - Evite abreviações que prejudiquem a pronúncia.
 - Não inclua títulos ou instruções dentro da fala.
 
+## Perfil ElevenLabs V3 - Brian
+
+Aplique este perfil somente quando a voz Brian
+ou o motor ElevenLabs for solicitado explicitamente.
+
+- Escreva para ser ouvido, nao apenas para ser lido.
+- Utilize linguagem humana, fluida e envolvente.
+- Construa uma progressao emocional coerente.
+- Prefira frases curtas com pausas naturais.
+- Evite listas de adjetivos e linguagem rebuscada.
+- Crie entradas suaves e encerramentos conclusivos.
+- Utilize pontuacao natural, sem exageros.
+- Nao utilize tags emocionais ou comandos vocais.
+- Respeite os limites de palavras existentes.
+- Para 15 segundos, prefira entre 26 e 28 palavras,
+  quando isso favorecer a naturalidade.
+- Preserve integralmente os fatos do usuario.
+- Mantenha todas as instrucoes de interpretacao
+  fora do texto que sera falado.
+
+Para Edge TTS, preserve as orientacoes anteriores.
+
 ## Formato obrigatório da resposta
 
 Título:
